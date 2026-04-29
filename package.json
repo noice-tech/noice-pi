@@ -1,0 +1,26 @@
+{
+  "name": "@noice-tech/pi-changelog",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Noice Tech Pi changelog workflow for commit, PR, and release notes conventions.",
+  "keywords": [
+    "pi-package",
+    "noice-tech",
+    "pi",
+    "changelog",
+    "release-notes"
+  ],
+  "license": "UNLICENSED",
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/changelog/index.ts"
+    ],
+    "prompts": [
+      "./prompts/*.md"
+    ]
+  }
+}
