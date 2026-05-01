@@ -12,7 +12,7 @@ Input notes from the user:
 
 Goal:
 
-Write guidance for humans and for `/release-changelog` that defines this product's public release notes voice, audience, terminology, and formatting.
+Write guidance for humans and for `/release-notes` that defines this product's public release notes voice, audience, terminology, and formatting.
 
 Important boundary:
 
@@ -41,7 +41,7 @@ The voice file should usually include:
 ```md
 # Release notes style
 
-These instructions are for humans and for `/release-changelog`.
+These instructions are for humans and for `/release-notes`.
 
 ## Audience
 
