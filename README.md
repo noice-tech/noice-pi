@@ -44,3 +44,95 @@ Examples:
 The canonical rules live in `extensions/changelog/rules.md`.
 
 The `/commit` command embeds those rules into the worker prompt at runtime. The `/release-changelog` prompt repeats the relevant rules because Pi prompt templates are static markdown.
+
+These package rules define the shared workflow across `/commit` and `/release-changelog`:
+
+- change types: `feat:`, `fix:`, `improve:`, `internal:`, `ignore:`
+- what counts as user-facing
+- PR changelog section format
+- source priority for release generation
+- privacy constraints for public output
+
+## Per-repo release changelog instructions
+
+Repos can add product-specific release guidance for humans and for `/release-changelog` at:
+
+```txt
+docs-for-devs/release-changelog.md
+```
+
+Use this file for repo-specific editorial guidance, such as:
+
+- audience
+- brand language and tone
+- product terminology
+- social media format
+- emoji conventions
+- bullet style
+- examples of good and bad public changelog copy
+
+The `/release-changelog` prompt checks for repo-specific instructions in this order:
+
+1. `docs-for-devs/release-changelog.md`
+2. `.pi/release-changelog.md`
+3. a README section named `Release changelog style`, `Changelog style`, or `Release notes style`
+
+Repo-specific instructions may refine voice and formatting, but they should not override the package rules for change classification, source priority, privacy, or excluding internal implementation details.
+
+Suggested repo README link:
+
+```md
+## Release changelog style
+
+Humans and `/release-changelog` should follow
+[docs-for-devs/release-changelog.md](docs-for-devs/release-changelog.md).
+```
+
+Suggested `docs-for-devs/release-changelog.md` starter:
+
+```md
+# Release changelog style
+
+These instructions are for humans and for `/release-changelog`.
+
+## Audience
+
+Write for existing users of <Product> reading updates on Discord and X.
+
+## Voice
+
+Use:
+- direct, concrete language
+- short sentences
+- a confident but not hypey tone
+
+Avoid:
+- startup marketing language
+- vague claims like “better experience”
+- internal implementation details
+
+## Product language
+
+Use:
+- “<preferred term>” instead of “<internal term>”
+
+Avoid:
+- internal codenames
+- backend/system terms
+
+## Bullet style
+
+Bullets should be:
+- one sentence each
+- specific
+- user-facing
+- short enough for social posts
+
+Good:
+- You can now export clips with branded end cards.
+- Hidden tracks no longer appear in exported videos.
+
+Bad:
+- Improved export experience.
+- Fixed renderer bug.
+```

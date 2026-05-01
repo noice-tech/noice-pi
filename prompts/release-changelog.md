@@ -8,7 +8,19 @@ Generate a public changelog/social post for the requested GitHub release or rele
 Input:
 `$ARGUMENTS`
 
-Follow these changelog rules exactly:
+First, check for repo-specific release changelog instructions.
+
+Look for these files/sections in this order:
+
+1. `docs-for-devs/release-changelog.md`
+2. `.pi/release-changelog.md`
+3. a README section named `Release changelog style`, `Changelog style`, or `Release notes style`
+
+If any exist, read them before writing the public post. Treat them as repo-specific editorial guidance for audience, brand language, product terminology, social formatting, examples, emoji use, and bullet style.
+
+Repo-specific instructions may refine tone and formatting, but they must not override the package changelog rules below about source priority, change classification, privacy, or excluding internal implementation details.
+
+Follow these shared changelog rules exactly:
 
 - PR title prefixes: `feat:`, `fix:`, `improve:`, `internal:`, `ignore:`.
 - `feat:` means users can do something new.
