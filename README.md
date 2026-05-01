@@ -77,7 +77,9 @@ The `/release-changelog` prompt checks for repo-specific instructions in this or
 2. `.pi/release-changelog.md`
 3. a README section named `Release changelog style`, `Changelog style`, or `Release notes style`
 
-Repo-specific instructions may refine voice and formatting, but they should not override the package rules for change classification, source priority, privacy, or excluding internal implementation details.
+Repo-specific instructions may define voice and public-output formatting, but they should not override the package rules for change classification, source priority, privacy, or excluding internal implementation details.
+
+Without repo-specific instructions, `/release-changelog` uses a minimal default public format: only a plain Markdown bullet list of public summaries.
 
 Suggested repo README link:
 

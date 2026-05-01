@@ -71,33 +71,27 @@ Public output constraints:
 - no commit hashes
 - no private URLs
 - no internal implementation details
-- same text should work for Discord and X
-- make the product feel alive and actively improving
-- do not force hype
-- avoid generic phrases like `improved experience`, `seamless`, `empower`, or `game-changing`
+Default public output format:
 
-Output format:
+- If repo-specific release changelog instructions define an output format, follow that format.
+- Otherwise, output only a plain Markdown bullet list of public summaries.
+- Do not add a title, heading, intro sentence, emoji, version line, CTA, links, or social-media framing unless repo-specific instructions ask for it.
 
-1. Public post, ready to copy.
-2. Internal source notes.
-
-Public post format:
+Default public output example:
 
 ```md
-:sparkles: **Update — <version or from → to>**
-
-<one short intro sentence>
-
 - <specific public change>
 - <specific public change>
 - <specific public change>
 ```
 
-If there are no meaningful public changes, output exactly this as the public post:
+If there are no meaningful public changes, output exactly this as the public output:
 
 ```txt
 No public changelog suggested for this release.
 ```
+
+After the public output, include internal source notes for private review.
 
 Internal source notes format:
 
