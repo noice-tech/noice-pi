@@ -1,20 +1,20 @@
 ---
-description: generate public changelog/social copy from a GitHub release or release range
+description: generate public release notes/social copy from a GitHub release or release range
 argument-hint: "<version | from..to>"
 ---
 
-Generate a public changelog/social post for the requested GitHub release or release range.
+Generate public release notes/social copy for the requested GitHub release or release range.
 
 Input:
 `$ARGUMENTS`
 
-First, check for repo-specific release changelog instructions.
+First, check for repo-specific release notes style instructions.
 
 Look for these files/sections in this order:
 
-1. `docs-for-devs/release-changelog.md`
-2. `.pi/release-changelog.md`
-3. a README section named `Release changelog style`, `Changelog style`, or `Release notes style`
+1. `docs-for-devs/release-notes-style.md`
+2. `.pi/release-notes-style.md`
+3. a README section named `Release notes style`, `Release changelog style`, or `Changelog style`
 
 If any exist, read them before writing the public post. Treat them as repo-specific editorial guidance for audience, brand language, product terminology, social formatting, examples, emoji use, and bullet style.
 
@@ -46,7 +46,7 @@ Use `gh` and `git` to inspect the requested release/range:
 - merged PRs included in the release or range
 - PR titles and PR bodies
 
-Public changelog source priority:
+Public release notes source priority:
 
 1. PR body `## Changelog` → `Public summary`
 2. PR body `## Changelog` → `Context`
@@ -73,7 +73,7 @@ Public output constraints:
 - no internal implementation details
 Default public output format:
 
-- If repo-specific release changelog instructions define an output format, follow that format.
+- If repo-specific release notes style instructions define an output format, follow that format.
 - Otherwise, output only a plain Markdown bullet list of public summaries.
 - Do not add a title, heading, intro sentence, emoji, version line, CTA, links, or social-media framing unless repo-specific instructions ask for it.
 
