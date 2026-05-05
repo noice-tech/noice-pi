@@ -3,10 +3,24 @@ description: generate public release notes/social copy from a GitHub release or 
 argument-hint: "<version | from..to>"
 ---
 
-Generate public release notes/social copy for the requested GitHub release or release range.
+Generate public release notes/social copy for the requested GitHub release or release range, and write it to a Markdown file.
 
 Input:
 `$ARGUMENTS`
+
+Output file requirement:
+
+- Do not just reply with the generated release notes.
+- Create `release-notes/` if it does not exist.
+- Write the generated output to `release-notes/<slug>.md`, where `<slug>` is based on `$ARGUMENTS`:
+  - trim surrounding whitespace, quotes, and backticks
+  - keep letters, numbers, dots, underscores, and hyphens
+  - replace all other characters, including spaces and slashes, with `-`
+  - collapse repeated hyphens
+  - if the slug is empty, use `release-notes`
+- Overwrite the file if it already exists.
+- The file content must include the public output followed by the internal source notes.
+- After writing the file, reply only with the file path and a one-sentence summary of what was written.
 
 First, check for repo-specific release notes style instructions.
 
