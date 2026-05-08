@@ -18,12 +18,13 @@ Before choosing commit messages, PR title, or PR changelog text, read and follow
 Workflow:
 
 1. Inspect git status, current branch, diff, branch commits, and existing PR.
-2. If there are no changes to commit, update the PR body if useful, otherwise report no-op.
-3. If on main, create a branch.
-4. Commit current changes with a good prefixed commit message.
-5. Push the branch.
-6. If no PR exists for the branch, create one.
-7. If PR exists, update title/body to reflect the full branch.
+2. If a PR exists, read its current title and full body before deciding what to change.
+3. If there are no changes to commit, update the PR body if useful, otherwise report no-op.
+4. If on main, create a branch.
+5. Commit current changes with a good prefixed commit message.
+6. Push the branch.
+7. If no PR exists for the branch, create one.
+8. If PR exists, update title/body to reflect the full branch while preserving useful existing PR description content.
 
 Rules:
 
@@ -39,7 +40,9 @@ Rules:
 - Do not modify source files unless absolutely required to complete commit/PR metadata.
 - Do not run broad validation unless it is obviously cheap and relevant.
 
-PR body format:
+PR body handling:
+
+- If creating a new PR, use this body format:
 
 ```md
 ## Summary
@@ -62,6 +65,12 @@ Context:
 
 - Commands run, or `Not run`.
 ```
+
+- If updating an existing PR, enhance the existing body instead of blindly replacing it.
+- Preserve useful existing sections, reviewer notes, checklists, screenshots/videos, testing notes, linked issues, and any manually written context unless they are now inaccurate.
+- Ensure the final body still contains `## Summary`, `## Changelog`, and `## Verification`; add any missing sections in the standard format.
+- Refresh only the parts that need to reflect the full branch, especially `## Changelog` → `Public summary`, `Context`, and verification.
+- Remove or rewrite stale content only when the current diff/branch proves it is wrong.
 
 Final output:
 Return exactly five lines, with real values only:
