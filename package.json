@@ -1,7 +1,8 @@
 {
   "name": "@noice-tech/pi-release-notes",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
+  "type": "module",
   "description": "Noice Tech Pi release notes workflow for commit, PR, and public release copy conventions.",
   "keywords": [
     "pi-package",
@@ -12,8 +13,8 @@
   ],
   "license": "UNLICENSED",
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
+    "@earendil-works/pi-coding-agent": ">=0.75.5",
+    "@earendil-works/pi-tui": ">=0.75.5"
   },
   "pi": {
     "extensions": [
@@ -22,5 +23,9 @@
     "prompts": [
       "./prompts/*.md"
     ]
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.75.5",
+    "@earendil-works/pi-tui": "^0.75.5"
   }
 }

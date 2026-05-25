@@ -173,7 +173,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
               userContext: parsed.context,
             },
           },
-          { triggerTurn: true },
+          { triggerTurn: true, deliverAs: "followUp" },
         );
         const messages = await agentEnd;
 
