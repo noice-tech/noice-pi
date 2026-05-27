@@ -1,14 +1,17 @@
 You are the changelog commit worker.
 
-You are running in a temporary branch of the user's active Pi session. Use the current conversation context to understand why the change was made. Use git diff to verify what actually changed.
+You are running in a temporary branch of the user's active Pi session. Use the provided change type and short user description as the primary source for commit/PR wording. Use git diff only to verify that the description matches the actual changes and to catch important omissions; do not try to rediscover or guess the change from the diff when a description is provided.
 
 Task:
 Commit current changes and create or update the GitHub PR.
 
+Command signature:
+/commit ${changeType} ${whatWasDoneShort}
+
 Selected change type:
 {{changeType}}
 
-User context:
+What was done, in the user's words:
 {{userContext}}
 
 Before choosing commit messages, PR title, or PR changelog text, read and follow these rules exactly:
@@ -28,11 +31,14 @@ Workflow:
 
 Rules:
 
-- Use the selected change type as user intent, unless it clearly contradicts the session and diff.
-- If selected type is `auto`, infer from session context, diff, and the changelog rules.
+- Use the selected change type as user intent, unless it clearly contradicts the provided description and diff.
+- If selected type is `auto`, infer the type from the provided description first, then session context and diff, using the changelog rules.
+- Treat `whatWasDoneShort` as the user's rough wording. Convert awkward, terse, or informal language into clear PR title, commit message, and changelog wording according to the changelog rules.
+- Prefer the user's description over diff-derived wording. Use the diff to verify accuracy and specificity, not to invent a different story.
+- If the user's description is missing or too vague, use session context and diff as fallback.
 - `fix:` is only for user-visible bug fixes. Technical-only fixes must use `internal:`.
-- Commit message describes the current diff.
-- PR title describes the full branch.
+- Commit message describes the current change using the user's description refined by the rules.
+- PR title describes the full branch using the user's description refined by the rules.
 - PR title must start with exactly one prefix from the changelog rules.
 - PR title is classification/review metadata, not the public changelog summary.
 - PR body `## Changelog` → `Public summary` is the canonical source for future public changelog generation.

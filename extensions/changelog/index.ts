@@ -147,13 +147,8 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
 
   pi.registerCommand("commit", {
     description:
-      "Commit changes and create or update PR using Noice changelog rules",
-    getArgumentCompletions: (prefix) => {
-      const matches = CHANGE_TYPES.filter((type) => type.startsWith(prefix));
-      return matches.length > 0
-        ? matches.map((type) => ({ value: type, label: type }))
-        : null;
-    },
+      "Commit changes and create/update PR. Usage: /commit <changeType> <what was done>",
+    getArgumentCompletions: getCommitArgumentCompletions,
     handler: async (args, ctx) => {
       if (commitWorkerRunning) {
         ctx.ui.notify("Commit worker is already running", "warning");
@@ -291,6 +286,37 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
       }
     },
   });
+}
+
+function getCommitArgumentCompletions(prefix: string) {
+  const trimmedStart = prefix.trimStart();
+  const leadingWhitespace = prefix.slice(0, prefix.length - trimmedStart.length);
+  const [firstWord = ""] = trimmedStart.split(/\s+/);
+  const isTypingDescription = /^\S+\s/.test(trimmedStart);
+
+  if (!isTypingDescription) {
+    const matches = CHANGE_TYPE_OPTIONS.filter((option) =>
+      option.type.startsWith(firstWord),
+    );
+    return matches.length > 0
+      ? matches.map((option) => ({
+          value: `${leadingWhitespace}${option.type} `,
+          label: option.label,
+        }))
+      : null;
+  }
+
+  if (!isChangeType(firstWord)) return null;
+
+  const whatWasDone = trimmedStart.slice(firstWord.length).trim();
+  return [
+    {
+      value: prefix,
+      label: whatWasDone
+        ? `What was done: "${whatWasDone}"`
+        : "Say what was done — rough wording is fine; leave blank to infer from session/diff",
+    },
+  ];
 }
 
 async function resolveChangeTypeAndContext(
