@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Noice Tech Pi release notes workflow for commit, PR, and public release copy conventions.",
+  "scripts": {
+    "typecheck": "tsc --noEmit --allowImportingTsExtensions --moduleResolution bundler --module ESNext --target ES2022 --skipLibCheck extensions/changelog/index.ts"
+  },
   "keywords": [
     "pi-package",
     "noice-tech",
@@ -26,6 +29,7 @@
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.75.5",
-    "@earendil-works/pi-tui": "^0.75.5"
+    "@earendil-works/pi-tui": "^0.75.5",
+    "typescript": "^6.0.3"
   }
 }

@@ -70,6 +70,34 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
     };
   });
 
+  async function sendResultAtSourceLeaf(
+    ctx: ExtensionCommandContext,
+    sourceLeafId: string | null | undefined,
+    message: {
+      customType: string;
+      content: string;
+      display: boolean;
+      details?: CommitResultDetails;
+    },
+  ) {
+    // `agent_end` fires before the session has fully left streaming mode. If we
+    // send while streaming, pi treats this as steering/follow-up input instead
+    // of appending a visible custom message, so it may only show on the next
+    // user turn. Wait until idle before writing the result entry.
+    if (!ctx.isIdle()) {
+      await ctx.waitForIdle();
+    }
+
+    pi.sendMessage(message);
+
+    // Keep the result attached to the source point, but leave the active leaf
+    // at the original source so the next user message branches from there.
+    const currentLeafId = ctx.sessionManager.getLeafId();
+    if (sourceLeafId && currentLeafId && currentLeafId !== sourceLeafId) {
+      await ctx.navigateTree(sourceLeafId, { summarize: false });
+    }
+  }
+
   pi.registerMessageRenderer<CommitResultDetails>(
     MESSAGE_TYPE,
     (message, _options, theme) => {
@@ -191,7 +219,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
           if (startLeafId && workerLeafId && workerLeafId !== startLeafId) {
             await ctx.navigateTree(startLeafId, { summarize: false });
           }
-          pi.sendMessage({
+          await sendResultAtSourceLeaf(ctx, startLeafId, {
             customType: MESSAGE_TYPE,
             content:
               "status: cancelled\nnotes: Commit command was cancelled before the worker produced a result.",
@@ -231,7 +259,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
         }
 
         const displayStatus = getDisplayStatus(summary);
-        pi.sendMessage({
+        await sendResultAtSourceLeaf(ctx, startLeafId, {
           customType: MESSAGE_TYPE,
           content: summary,
           display: true,
@@ -243,11 +271,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
           },
         });
         ctx.ui.notify(
-          displayStatus === "failed"
-            ? "Commit worker failed"
-            : displayStatus === "cancelled"
-              ? "Commit command cancelled"
-              : "Commit worker finished",
+          formatCommitNotification(summary, displayStatus),
           displayStatus === "failed"
             ? "error"
             : displayStatus === "cancelled"
@@ -258,7 +282,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
         const message = error instanceof Error ? error.message : String(error);
         if (startLeafId)
           await ctx.navigateTree(startLeafId, { summarize: false });
-        pi.sendMessage({
+        await sendResultAtSourceLeaf(ctx, startLeafId, {
           customType: MESSAGE_TYPE,
           content: `Commit worker failed: ${message}`,
           display: true,
@@ -268,7 +292,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
             status: "failed",
           },
         });
-        ctx.ui.notify(`Commit worker failed: ${message}`, "error");
+        ctx.ui.notify(`Commit worker failed:\n${message}`, "error");
       } finally {
         ctx.ui.setStatus(STATUS_KEY, undefined);
         commitWorkerRunning = false;
@@ -338,6 +362,20 @@ function getDisplayStatus(
   }
 
   return "ok";
+}
+
+function formatCommitNotification(
+  summary: string,
+  status: CommitDisplayStatus,
+): string {
+  const title =
+    status === "failed"
+      ? "Commit worker failed"
+      : status === "cancelled"
+        ? "Commit command cancelled"
+        : "Commit worker finished";
+  const trimmedSummary = summary.trim();
+  return trimmedSummary ? `${title}:\n${trimmedSummary}` : title;
 }
 
 function findLastCustomMessageIndex(messages: unknown[], customType: string) {
