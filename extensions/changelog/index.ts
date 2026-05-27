@@ -43,9 +43,13 @@ interface CommitResultDetails {
 
 let commitWorkerRunning = false;
 let agentEndWaiter: ((messages: unknown[]) => void) | undefined;
+let latestCommitWorkerMessages: unknown[] | undefined;
 
 export default function noiceChangelogExtension(pi: ExtensionAPI) {
   pi.on("agent_end", (event) => {
+    if (commitWorkerRunning) {
+      latestCommitWorkerMessages = event.messages;
+    }
     agentEndWaiter?.(event.messages);
     agentEndWaiter = undefined;
   });
@@ -159,13 +163,6 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
 
       const parsed = await resolveChangeTypeAndContext(args, ctx);
       if (!parsed) {
-        pi.sendMessage({
-          customType: MESSAGE_TYPE,
-          content: "status: cancelled\nnotes: Change type selection was cancelled.",
-          display: true,
-          details: { status: "cancelled" },
-        });
-        ctx.ui.notify("Commit command cancelled", "warning");
         return;
       }
 
@@ -177,7 +174,8 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
       ctx.ui.notify(`Starting commit worker (${parsed.changeType})`, "info");
 
       try {
-        const agentEnd = waitForNextAgentEnd();
+        const agentEnd = waitForNextAgentEndAfterIdle(ctx);
+        latestCommitWorkerMessages = undefined;
         pi.sendMessage(
           {
             customType: PROMPT_MESSAGE_TYPE,
@@ -201,6 +199,29 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
           workerPromptIndex >= 0
             ? extractLastAssistantText(messages, workerPromptIndex)
             : "";
+        const assistantError =
+          workerPromptIndex >= 0
+            ? extractLastAssistantError(messages, workerPromptIndex)
+            : undefined;
+
+        if (assistantError) {
+          if (startLeafId && workerLeafId && workerLeafId !== startLeafId) {
+            await ctx.navigateTree(startLeafId, { summarize: false });
+          }
+          await sendResultAtSourceLeaf(ctx, startLeafId, {
+            customType: MESSAGE_TYPE,
+            content: formatWorkerErrorResult(assistantError, summary),
+            display: true,
+            details: {
+              changeType: parsed.changeType,
+              userContext: parsed.context,
+              workerLeafId,
+              status: "failed",
+            },
+          });
+          ctx.ui.notify(`Commit worker failed:\n${assistantError}`, "error");
+          return;
+        }
 
         if (!summary) {
           if (startLeafId && workerLeafId && workerLeafId !== startLeafId) {
@@ -283,6 +304,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
       } finally {
         ctx.ui.setStatus(STATUS_KEY, undefined);
         commitWorkerRunning = false;
+        latestCommitWorkerMessages = undefined;
       }
     },
   });
@@ -361,9 +383,19 @@ async function buildWorkerPrompt(changeType: ChangeType, userContext: string) {
     .replaceAll("{{rules}}", rules);
 }
 
-function waitForNextAgentEnd() {
+function waitForNextAgentEndAfterIdle(ctx: ExtensionCommandContext) {
   return new Promise<unknown[]>((resolve) => {
-    agentEndWaiter = resolve;
+    agentEndWaiter = (messages) => {
+      void (async () => {
+        // `agent_end` also fires for transient provider failures that Pi may
+        // auto-retry. Wait until the whole agent run is idle, then use the
+        // latest worker messages captured by the global `agent_end` listener.
+        if (!ctx.isIdle()) {
+          await ctx.waitForIdle();
+        }
+        resolve(latestCommitWorkerMessages ?? messages);
+      })();
+    };
   });
 }
 
@@ -380,6 +412,18 @@ function getDisplayStatus(
   }
 
   return "ok";
+}
+
+function formatWorkerErrorResult(error: string, partialSummary: string) {
+  const partial = partialSummary.trim();
+  return [
+    "status: failed",
+    `notes: Commit worker errored${partial ? " after a partial response" : " before producing a result"}.`,
+    `error: ${error}`,
+    partial ? `\nPartial response:\n${partial}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function formatCommitNotification(
@@ -406,15 +450,29 @@ function findLastCustomMessageIndex(messages: unknown[], customType: string) {
 }
 
 function extractLastAssistantText(messages: unknown[], afterIndex = -1) {
-  for (let index = messages.length - 1; index > afterIndex; index--) {
-    const message = messages[index] as { role?: string; content?: unknown };
-    if (message.role !== "assistant") continue;
+  const message = findLastAssistantMessage(messages, afterIndex);
+  return message ? extractTextFromContent(message.content).trim() : "";
+}
 
-    const text = extractTextFromContent(message.content).trim();
-    if (text) return text;
+function extractLastAssistantError(messages: unknown[], afterIndex = -1) {
+  const message = findLastAssistantMessage(messages, afterIndex);
+  if (message?.stopReason !== "error") return undefined;
+
+  return message.errorMessage?.trim() || "Unknown provider error";
+}
+
+function findLastAssistantMessage(messages: unknown[], afterIndex = -1) {
+  for (let index = messages.length - 1; index > afterIndex; index--) {
+    const message = messages[index] as {
+      role?: string;
+      content?: unknown;
+      stopReason?: string;
+      errorMessage?: string;
+    };
+    if (message.role === "assistant") return message;
   }
 
-  return "";
+  return undefined;
 }
 
 function extractTextFromContent(content: unknown): string {
