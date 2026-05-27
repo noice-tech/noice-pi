@@ -28,6 +28,7 @@ Workflow:
 6. Push the branch.
 7. If no PR exists for the branch, create one.
 8. If PR exists, update title/body to reflect the full branch while preserving useful existing PR description content.
+9. When creating or updating a PR body, always write the final markdown body to a file in a temporary directory and pass it to GitHub CLI with `--body-file`; do not pass markdown through `--body`.
 
 Rules:
 
@@ -48,6 +49,13 @@ Rules:
 
 PR body handling:
 
+- Always prepare the final PR body as a markdown file in a temporary directory, for example:
+  - `tmpdir=$(mktemp -d)`
+  - `body_file="$tmpdir/pr-body.md"`
+  - write the markdown body to `$body_file`
+- Create PRs with `gh pr create --title "..." --body-file "$body_file" ...`.
+- Update PRs with `gh pr edit <number-or-url> --title "..." --body-file "$body_file"`.
+- Do not use `--body` for markdown PR bodies; it can cause shell quoting and formatting problems.
 - If creating a new PR, use this body format:
 
 ```md
