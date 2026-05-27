@@ -8,14 +8,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const CHANGE_TYPES = [
-  "auto",
-  "feat",
-  "fix",
-  "improve",
-  "internal",
-  "ignore",
-] as const;
+const CHANGE_TYPES = ["auto", "feat", "fix", "improve", "internal"] as const;
 type ChangeType = (typeof CHANGE_TYPES)[number];
 
 const CHANGE_TYPE_OPTIONS: Array<{ type: ChangeType; label: string }> = [
@@ -33,7 +26,6 @@ const CHANGE_TYPE_OPTIONS: Array<{ type: ChangeType; label: string }> = [
     type: "internal",
     label: "internal - Infra/tooling/tests/refactor/deps/logging",
   },
-  { type: "ignore", label: "ignore - No changelog/release value" },
 ];
 
 const MESSAGE_TYPE = "noice-changelog-commit-result";

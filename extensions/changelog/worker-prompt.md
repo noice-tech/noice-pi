@@ -54,12 +54,11 @@ PR body handling:
 Public summary:
 
 - For feat/fix/improve: one specific standalone user-facing sentence.
-- For internal/ignore: None.
+- For internal: None.
 
 Context:
 
 - Useful context for future release generation.
-- For ignore: None.
 
 ## Verification
 

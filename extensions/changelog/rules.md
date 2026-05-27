@@ -14,7 +14,6 @@ Every PR title should start with exactly one prefix:
 - `fix:` user-facing bug fix
 - `improve:` user-facing refinement, UX, performance, or reliability improvement
 - `internal:` infra, CI, tooling, refactor, tests, dependencies, logging, or other non-user-facing work
-- `ignore:` no release/changelog value
 
 These prefixes are release intent, not conventional commits.
 
@@ -24,7 +23,6 @@ These prefixes are release intent, not conventional commits.
 - `fix:` means a user-visible bug or broken behavior was corrected.
 - `improve:` means an existing user-facing workflow became clearer, faster, smoother, more reliable, or easier to use.
 - `internal:` means the work may matter to development/release/reliability but is not a public product change.
-- `ignore:` means the work should not appear in release or public changelog narratives.
 
 Do not use `fix:` for technical-only fixes. Use `internal:` for TypeScript fixes, build fixes, CI fixes, test fixes, dependency fixes, refactor corrections, and internal error handling unless the corrected behavior is directly user-visible.
 
@@ -38,7 +36,6 @@ Good PR titles are concrete:
 - `fix: prevent hidden tracks from rendering`
 - `improve: speed up waveform rendering for long projects`
 - `internal: centralize release deployment workflow`
-- `ignore: refactor timeline test helpers`
 
 Avoid vague value-prop titles:
 
@@ -64,7 +61,7 @@ Context:
 
 For `feat:`, `fix:`, and `improve:`, `Public summary` should contain one specific standalone user-facing sentence. Write it as if it may become one bullet in a public release post.
 
-For `internal:` and `ignore:`, write exactly:
+For `internal:`, write exactly:
 
 ```md
 Public summary:
@@ -72,7 +69,7 @@ Public summary:
 - None.
 ```
 
-`Context` can include product/business details that help future release generation. It may be internal. For `ignore:`, use `None.`
+`Context` can include product/business details that help future release generation. It may be internal.
 
 ## Public changelog source priority
 
