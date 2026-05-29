@@ -5,6 +5,7 @@ Noice Tech Pi package for release notes-aware commit, PR, and public release cop
 ## What it installs
 
 - `/commit` extension command that commits current changes and creates/updates the GitHub PR using Noice changelog rules.
+- `/unreleased` prompt template that previews release-worthy PR changelog data since the latest git tag.
 - `/release-notes` prompt template that generates public release notes/social copy from GitHub releases or tag ranges.
 - `/setup-release-notes-style` prompt template that helps create repo-specific release notes voice and formatting guidance for `/release-notes`.
 
@@ -30,6 +31,7 @@ Expected project settings:
 
 ```txt
 /commit [auto|feat|fix|improve|internal|ignore] [optional context]
+/unreleased
 /release-notes <version | from..to>
 /setup-release-notes-style [product/audience/channel notes]
 ```
@@ -38,6 +40,7 @@ Examples:
 
 ```txt
 /commit improve speed up editor boot by lazy-loading templates
+/unreleased
 /release-notes 5.0.2..5.0.5
 /setup-release-notes-style Discord and X, concise, friendly, existing users of Noice
 ```
@@ -48,7 +51,7 @@ The canonical rules live in `extensions/changelog/rules.md`.
 
 The `/commit` command embeds those rules into the worker prompt at runtime. The `/release-notes` prompt repeats the relevant rules because Pi prompt templates are static markdown.
 
-These package rules define the shared workflow across `/commit` and `/release-notes`:
+These package rules define the shared workflow across `/commit`, `/unreleased`, and `/release-notes`:
 
 - change types: `feat:`, `fix:`, `improve:`, `internal:`, `ignore:`
 - what counts as user-facing
