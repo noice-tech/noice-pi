@@ -1,6 +1,6 @@
 {
   "name": "@noice-tech/pi-release-notes",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "description": "Noice Tech Pi release notes workflow for commit, PR, and public release copy conventions.",
