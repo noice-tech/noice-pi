@@ -20,14 +20,14 @@ Before choosing commit messages, PR title, or PR changelog text, read and follow
 
 Workflow:
 
-1. Inspect git status, current branch, diff, branch commits, and existing PR.
-2. If a PR exists, read its current title and full body before deciding what to change.
+1. Inspect git status, current branch, diff, branch commits, candidate base branch, and existing PR.
+2. If a PR exists, read its current title, base branch, and full body before deciding what to change.
 3. If there are no changes to commit, update the PR body if useful, otherwise report no-op.
 4. If on main, create a branch.
 5. Commit current changes with a good prefixed commit message.
 6. Push the branch.
-7. If no PR exists for the branch, create one.
-8. If PR exists, update title/body to reflect the full branch while preserving useful existing PR description content.
+7. If no PR exists for the branch, create one against the detected base branch.
+8. If PR exists, update title/body to reflect the full branch while preserving useful existing PR description content and existing base branch.
 9. When creating a PR body, always write the final markdown body to a file in a temporary directory and pass it to GitHub CLI with `--body-file`; do not pass markdown through `--body`.
 10. When updating an existing PR, avoid `gh pr edit`; it can fail on some repositories because GitHub CLI queries deprecated Projects Classic GraphQL fields. Use the REST API fallback described below instead.
 
@@ -47,6 +47,20 @@ Rules:
 - Do not use vague value-prop titles.
 - Do not modify source files unless absolutely required to complete commit/PR metadata.
 - Do not run broad validation unless it is obviously cheap and relevant.
+
+PR base branch handling:
+
+- Never rely on `gh pr create`'s implicit base branch; it usually defaults to the repository default branch, which may be wrong for branches based on release, staging, or feature branches.
+- If an existing PR exists, preserve its current `baseRefName`. Do not change the PR base unless the user explicitly asked for that.
+- Before creating a new PR, determine the intended base branch and pass it explicitly with `--base "$base_branch"`.
+- Prefer a user-configured base if available, for example `git config --get branch.$current_branch.gh-merge-base` or `git config --get branch.$current_branch.noice-base`.
+- Otherwise fetch remote branches and infer the likely base from the branch ancestry. Compare candidate remote branches such as the repository default branch, `develop`, `staging`, `release/*`, and other long-lived branches, excluding the current head branch. Prefer the candidate with the most recent merge-base with `HEAD`; this usually recovers the branch the work was created from.
+- If the inferred base is not the repository default branch, mention that in the final notes. If the base is ambiguous, fail with a concise note asking the user to rerun with the intended base instead of opening a PR to the wrong branch.
+- Use this shape when creating a PR:
+
+```sh
+gh pr create --base "$base_branch" --title "$title" --body-file "$body_file"
+```
 
 PR body handling:
 
