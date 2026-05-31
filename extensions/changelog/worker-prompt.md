@@ -28,7 +28,8 @@ Workflow:
 6. Push the branch.
 7. If no PR exists for the branch, create one.
 8. If PR exists, update title/body to reflect the full branch while preserving useful existing PR description content.
-9. When creating or updating a PR body, always write the final markdown body to a file in a temporary directory and pass it to GitHub CLI with `--body-file`; do not pass markdown through `--body`.
+9. When creating a PR body, always write the final markdown body to a file in a temporary directory and pass it to GitHub CLI with `--body-file`; do not pass markdown through `--body`.
+10. When updating an existing PR, avoid `gh pr edit`; it can fail on some repositories because GitHub CLI queries deprecated Projects Classic GraphQL fields. Use the REST API fallback described below instead.
 
 Rules:
 
@@ -54,8 +55,23 @@ PR body handling:
   - `body_file="$tmpdir/pr-body.md"`
   - write the markdown body to `$body_file`
 - Create PRs with `gh pr create --title "..." --body-file "$body_file" ...`.
-- Update PRs with `gh pr edit <number-or-url> --title "..." --body-file "$body_file"`.
+- Update existing PRs with `gh api repos/OWNER/REPO/pulls/PR_NUMBER -X PATCH`; do not use `gh pr edit` for PR updates.
 - Do not use `--body` for markdown PR bodies; it can cause shell quoting and formatting problems.
+- For existing PR updates, use this safe REST flow and replace only the title/body values:
+
+```sh
+repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+pr_number=$(gh pr view --json number --jq .number)
+title='improve: concise PR title here'
+title_json=$(jq -Rn --arg value "$title" '$value')
+body_json=$(jq -Rs . < "$body_file")
+gh api "repos/$repo/pulls/$pr_number" \
+  -X PATCH \
+  --input <(printf '{"title":%s,"body":%s}' "$title_json" "$body_json") \
+  --jq '.html_url'
+```
+
+- If `gh api` succeeds, do not print the full JSON response; use `--jq` to return a concise confirmation such as `.html_url`.
 - If creating a new PR, use this body format:
 
 ```md
