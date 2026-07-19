@@ -31,4 +31,10 @@ The root workspace is private and is not published. Local Pi settings load both 
 
 ## Publishing
 
-Maintainers should read [CONTRIBUTING.md](CONTRIBUTING.md) for release preparation and first-publication instructions. The release script creates and pushes a release commit and tag, but never publishes to npm.
+All packages use one lockstep version and are published together, even when some packages have no changes. The release flow is deliberately staged:
+
+1. `pnpm release:prepare X.Y.Z` bumps every package and pushes `vX.Y.Z`.
+2. A maintainer reviews the tag and creates the GitHub Release.
+3. `pnpm release:publish X.Y.Z` publishes every package from the maintainer's machine.
+
+Only the third step writes to npm. See [CONTRIBUTING.md](CONTRIBUTING.md) for validation, credentials, and partial-publication recovery details.

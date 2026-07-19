@@ -7,6 +7,7 @@ Prerequisites:
 - Node 24.13.0
 - pnpm 11.3.0
 - Git
+- GitHub CLI (`gh`) for release publication checks
 - `tar` on `PATH` (used by package smoke tests to inspect archives)
 
 Install and run the repository checks:
@@ -19,46 +20,107 @@ pnpm check
 
 Keep changes focused and update package documentation when behavior changes.
 
-## Preparing a later release
+## Version policy
 
-From a clean, up-to-date `main` branch, run the release preparation command with the exact workspace package name and an increasing version:
+All publishable direct children of `packages/` use one lockstep version. Every
+release bumps and publishes every package, including packages whose implementation
+did not change. The private root workspace is not versioned or published.
 
-```bash
-pnpm release:prepare @noice-tech/pi-terminal-bell X.Y.Z
-```
+Choose the shared SemVer bump from the largest change in the release:
 
-Substitute another publishable package name, such as `@noice-tech/pi-changelog`, when releasing that package. The script selects one publishable direct child of `packages/` by its exact package name. It requires a canonical, increasing `X.Y.Z` version, updates only that package's version, runs `pnpm check`, commits `Release <package-name> <version>`, creates the annotated tag `<package-name>@<version>`, then atomically pushes `main` and the tag to GitHub. It never runs `npm publish` or `pnpm publish`.
+- breaking change in any package: major
+- new backward-compatible behavior in any package: minor
+- fixes or maintenance only: patch
 
-If validation fails before the commit or tag, the package manifest remains modified so the problem is visible. Fix the issue or restore the manifest before retrying. If the atomic push fails, the local release commit and tag remain available for inspection; verify the remote outcome and follow the recovery command printed by the script. GitHub cannot accept only one of the branch and tag updates from the atomic push.
+Release notes should identify which packages changed and which were republished
+unchanged.
 
-## First npm publication
+The manifests use `1.0.1` as the aligned migration baseline, but that version was
+not published as a lockstep release. The first coordinated release must therefore
+be `1.0.2` or greater.
 
-A package introduced with an already-versioned initial `1.0.0` uses the clean-main first-publication path instead of `release:prepare`. Repository-wide pnpm Git checks remain enabled. When validating an uncommitted development tree, select the exact package and bypass the checks only for that dry-run command:
+## Release flow
 
-```bash
-PACKAGE_NAME=@noice-tech/pi-terminal-bell
-pnpm --filter "$PACKAGE_NAME" publish --dry-run --no-git-checks
-```
+A release has three explicit phases. Only the final phase writes to npm.
 
-The bypass above is only for an optional dry run from an uncommitted development tree. Never use it for a real publication.
+### 1. Prepare and push the release
 
-Before publishing, confirm npm organization access and validate the exact clean, up-to-date merged `main` commit. Run a frozen install, the full repository checks (including exact package archive smoke tests), and a fresh publish dry-run without bypassing Git checks:
-
-```bash
-PACKAGE_NAME=@noice-tech/pi-terminal-bell
-git switch main
-git fetch origin main
-test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
-test -z "$(git status --porcelain)"
-pnpm install --frozen-lockfile
-pnpm check
-pnpm --filter "$PACKAGE_NAME" publish --dry-run
-```
-
-If every command passes without changing the worktree, publish from that same commit:
+From a clean, up-to-date `main` branch, run:
 
 ```bash
-pnpm --filter "$PACKAGE_NAME" publish --access public
+pnpm release:prepare X.Y.Z
 ```
 
-Do not create a `1.0.0` tag merely to stage a package migration. For every later increasing release, prepare the release with `release:prepare`, review the pushed tag, and publish separately using the same explicit package selection.
+The command:
+
+1. verifies that local `main` exactly matches `origin/main`;
+2. requires `X.Y.Z` to be greater than every publishable package's current
+   version;
+3. writes `X.Y.Z` to every publishable `packages/*/package.json`;
+4. runs `pnpm check`;
+5. commits the manifests as `Release X.Y.Z`;
+6. creates the annotated repository tag `vX.Y.Z`; and
+7. atomically pushes `main` and the tag to GitHub.
+
+**This command never publishes to npm.**
+
+If validation fails before the commit or tag, the manifests remain modified so
+the problem is visible. Fix the issue or restore them before retrying. If the
+atomic push fails, inspect the remote outcome and follow the recovery command
+printed by the script.
+
+### 2. Create the GitHub Release
+
+Review `vX.Y.Z`, prepare release notes, and create a published GitHub Release for
+that exact tag. Do not leave it as a draft or mark a stable `X.Y.Z` release as a
+prerelease.
+
+This can be done in the GitHub UI or with GitHub CLI:
+
+```bash
+gh release create vX.Y.Z --verify-tag --title "vX.Y.Z" --generate-notes
+```
+
+**Creating the GitHub Release still does not publish to npm.** It is the explicit
+review gate that the local publication command verifies.
+
+### 3. Publish every package to npm
+
+Stay on the same clean, up-to-date `main` commit. Authenticate if necessary, then
+run:
+
+```bash
+npm login
+pnpm release:publish X.Y.Z
+```
+
+The command verifies all of the following before publishing:
+
+- local `main` exactly matches `origin/main`;
+- local and remote `vX.Y.Z` tags match and point to the current commit;
+- every publishable package manifest is at `X.Y.Z`;
+- a published, non-prerelease GitHub Release exists for `vX.Y.Z`;
+- npm authentication works; and
+- `pnpm check` passes without changing the worktree.
+
+It then publishes each package sequentially as public with npm dist-tag `latest`.
+This is the exact point at which npm publication happens.
+
+`npm whoami` confirms authentication, but it cannot preflight organization
+permissions or an interactive two-factor authentication challenge. Those can
+still fail when publication starts.
+
+npm does not support an atomic multi-package publish. If a later package fails,
+earlier packages remain published and their exact versions cannot be reused.
+Fix the problem and rerun the same command:
+
+```bash
+pnpm release:publish X.Y.Z
+```
+
+The command checks npm before each publication and skips package versions that
+already exist, so retrying completes a partial release instead of attempting to
+republish immutable versions.
+
+Do not publish individual workspace packages manually during the normal release
+flow. The lockstep publication command is what keeps their versions aligned.

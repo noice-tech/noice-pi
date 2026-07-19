@@ -1,42 +1,20 @@
 #!/usr/bin/env node
 
-import { execFileSync } from 'node:child_process'
-import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { writeFileSync } from 'node:fs'
+import {
+  compareVersions,
+  discoverPublishablePackages,
+  fail,
+  git,
+  parseVersion,
+  run
+} from './release-utils.mjs'
 
-const [packageName, version] = process.argv.slice(2)
-
-function fail(message) {
-  console.error(message)
-  process.exit(1)
+const arguments_ = process.argv.slice(2)
+if (arguments_.length !== 1) {
+  fail('Usage: pnpm release:prepare <X.Y.Z>')
 }
-
-function git(args, options = {}) {
-  const output = execFileSync('git', args, {
-    encoding: 'utf8',
-    stdio: options.stdio ?? ['ignore', 'pipe', 'pipe']
-  })
-  return typeof output === 'string' ? output.trim() : ''
-}
-
-if (!packageName || !version) {
-  fail('Usage: pnpm release:prepare <workspace-package-name> <X.Y.Z>')
-}
-
-const canonicalVersionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
-
-function parseVersion(value) {
-  const match = canonicalVersionPattern.exec(value)
-  return match ? match.slice(1).map((part) => BigInt(part)) : undefined
-}
-
-function compareVersions(left, right) {
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] > right[index]) return 1
-    if (left[index] < right[index]) return -1
-  }
-  return 0
-}
+const [version] = arguments_
 
 const requestedVersion = parseVersion(version)
 if (!requestedVersion) {
@@ -65,47 +43,22 @@ if (localHead !== remoteHead) {
   fail('Local main must exactly match origin/main before preparing a release')
 }
 
-const packageCandidates = readdirSync('packages')
-  .map((entry) => join('packages', entry))
-  .filter((directory) => statSync(directory).isDirectory())
-  .map((directory) => ({
-    directory,
-    manifestPath: join(directory, 'package.json')
-  }))
-  .filter(({ manifestPath }) => {
-    try {
-      return statSync(manifestPath).isFile()
-    } catch {
-      return false
-    }
-  })
-  .map((candidate) => ({
-    ...candidate,
-    manifest: JSON.parse(readFileSync(candidate.manifestPath, 'utf8'))
-  }))
-  .filter(({ manifest }) => manifest.private !== true)
-  .filter(({ manifest }) => manifest.name === packageName)
-
-if (packageCandidates.length !== 1) {
-  fail(
-    `Expected exactly one publishable packages/* workspace named ${packageName}; found ${packageCandidates.length}`
-  )
+const packages = discoverPublishablePackages()
+for (const candidate of packages) {
+  const currentVersion = parseVersion(candidate.manifest.version)
+  if (!currentVersion) {
+    fail(
+      `${candidate.manifest.name} has a non-canonical current version: ${candidate.manifest.version}`
+    )
+  }
+  if (compareVersions(requestedVersion, currentVersion) <= 0) {
+    fail(
+      `Requested version ${version} must be greater than ${candidate.manifest.name}'s current version ${candidate.manifest.version}`
+    )
+  }
 }
 
-const selected = packageCandidates[0]
-const currentVersion = parseVersion(selected.manifest.version)
-if (!currentVersion) {
-  fail(
-    `${packageName} has a non-canonical current version: ${selected.manifest.version}`
-  )
-}
-if (compareVersions(requestedVersion, currentVersion) <= 0) {
-  fail(
-    `Requested version ${version} must be greater than current version ${selected.manifest.version}`
-  )
-}
-
-const tag = `${packageName}@${version}`
+const tag = `v${version}`
 
 try {
   git(['show-ref', '--verify', '--quiet', `refs/tags/${tag}`])
@@ -121,41 +74,55 @@ try {
   if (error.status !== 2) throw error
 }
 
-selected.manifest.version = version
-writeFileSync(
-  selected.manifestPath,
-  `${JSON.stringify(selected.manifest, null, 2)}\n`
-)
+for (const candidate of packages) {
+  candidate.manifest.version = version
+  writeFileSync(
+    candidate.manifestPath,
+    `${JSON.stringify(candidate.manifest, null, 2)}\n`
+  )
+}
 
 try {
-  execFileSync('pnpm', ['check'], { stdio: 'inherit' })
+  run('pnpm', ['check'], { stdio: 'inherit' })
 } catch {
   fail(
-    `Repository checks failed. ${selected.manifestPath} remains updated to ${version}; fix the failure or restore it before retrying.`
+    `Repository checks failed. Package manifests remain updated to ${version}; fix the failure or restore them before retrying.`
   )
 }
 
-const changedFiles = git(['diff', '--name-only']).split('\n').filter(Boolean)
-if (changedFiles.length !== 1 || changedFiles[0] !== selected.manifestPath) {
+const changedFiles = new Set([
+  ...git(['diff', '--name-only']).split('\n').filter(Boolean),
+  ...git(['diff', '--cached', '--name-only']).split('\n').filter(Boolean),
+  ...git(['ls-files', '--others', '--exclude-standard'])
+    .split('\n')
+    .filter(Boolean)
+])
+const expectedFiles = packages.map(({ manifestPath }) => manifestPath).sort()
+const actualFiles = [...changedFiles].sort()
+if (
+  actualFiles.length !== expectedFiles.length ||
+  actualFiles.some((file, index) => file !== expectedFiles[index])
+) {
   fail(
-    `Release preparation expected only ${selected.manifestPath} to change after checks; found: ${changedFiles.join(', ') || 'none'}`
+    `Release preparation expected only these package manifests to change: ${expectedFiles.join(', ')}. Found: ${actualFiles.join(', ') || 'none'}`
   )
 }
 
-git(['add', '--', selected.manifestPath])
-git(['commit', '-m', `Release ${packageName} ${version}`], {
-  stdio: 'inherit'
-})
-git(['tag', '-a', tag, '-m', `Release ${packageName} ${version}`])
+git(['add', '--', ...expectedFiles])
+git(['commit', '-m', `Release ${version}`], { stdio: 'inherit' })
+git(['tag', '-a', tag, '-m', `Release ${version}`])
 
 try {
   git(['push', '--atomic', 'origin', 'main', tag], { stdio: 'inherit' })
 } catch {
   fail(
-    `Atomic push failed; GitHub cannot have published only main or only ${tag}, but a transport error can leave the all-or-nothing remote outcome unknown. The release commit and tag remain local. Inspect origin, then retry \`git push --atomic origin main ${tag}\` if needed, or remove the local tag and release commit before rerunning release preparation.`
+    `Atomic push failed; GitHub cannot have accepted only main or only ${tag}, but a transport error can leave the all-or-nothing remote outcome unknown. The release commit and tag remain local. Inspect origin, then retry \`git push --atomic origin main ${tag}\` if needed, or remove the local tag and release commit before rerunning release preparation.`
   )
 }
 
+console.log(`\nPrepared and pushed ${tag}. Nothing has been published to npm.`)
+console.log('\nNext:')
 console.log(
-  `Prepared ${tag} with an atomic GitHub push. Publish to npm separately after reviewing the pushed release.`
+  `  1. Create a published GitHub Release for ${tag} (not a draft or prerelease).`
 )
+console.log(`  2. Run: pnpm release:publish ${version}`)
