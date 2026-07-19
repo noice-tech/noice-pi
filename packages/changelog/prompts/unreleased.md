@@ -12,12 +12,14 @@ Ignore arguments if provided. This command previews the current unreleased state
 
 Follow these shared changelog rules exactly:
 
-- PR title prefixes: `feat:`, `fix:`, `improve:`, and `internal:`.
-- `feat:` means users can do something new.
-- `fix:` means a user-visible bug or broken behavior was corrected.
-- `improve:` means an existing user-facing workflow became clearer, faster, smoother, more reliable, or easier to use.
-- `internal:` means the work may matter to development/release/reliability but is not a public product change.
-- Do not use technical-only fixes as public fixes. TypeScript, build, CI, test, dependency, refactor, and internal error-handling fixes are `internal:` unless the corrected behavior is directly user-visible.
+- Valid PR titles use either unscoped `type: description` or package-scoped `type(package): description` form.
+- The change types are `feat`, `fix`, `improve`, and `internal`.
+- `feat` means users can do something new.
+- `fix` means a user-visible bug or broken behavior was corrected.
+- `improve` means an existing user-facing workflow became clearer, faster, smoother, more reliable, or easier to use.
+- `internal` means the work may matter to development/release/reliability but is not a public product change.
+- Do not use technical-only fixes as public fixes. TypeScript, build, CI, test, dependency, refactor, and internal error-handling fixes are `internal` unless the corrected behavior is directly user-visible.
+- A package scope, including `monorepo`, is metadata. It does not change the change type and must not be copied into public changelog text.
 - PR titles are classification/review metadata. They are not the public changelog source.
 - PR body `## Changelog` → `Public summary` is the canonical public changelog atom.
 
@@ -41,10 +43,10 @@ Workflow:
 
 Public candidate rules:
 
-- Include `feat:`, `fix:`, and `improve:` PRs when `Public summary` contains a meaningful user-facing summary.
-- Skip `internal:` PRs by default.
+- Include `feat`, `fix`, and `improve` PRs, whether scoped or unscoped, when `Public summary` contains a meaningful user-facing summary.
+- Skip `internal` PRs by default, whether scoped or unscoped.
 - Skip PRs where `Public summary` is `None`.
-- Be conservative with `fix:`. Include only user-visible fixes, not technical/build/CI/test/refactor/dependency fixes.
+- Be conservative with `fix`. Include only user-visible fixes, not technical/build/CI/test/refactor/dependency fixes.
 - Use `Public summary` text as the candidate release bullet when available.
 - If the PR appears user-facing but lacks a usable public summary, put it under `Needs cleanup`, not `Public candidates`.
 
@@ -55,8 +57,8 @@ Flag PRs that may affect release quality, especially:
 - missing `## Changelog` section
 - missing `Public summary`
 - vague public summary such as “Improved experience” or “Bug fixes”
-- `feat:`, `fix:`, or `improve:` PR with `Public summary: None`
-- title prefix appears inconsistent with the changelog body
+- `feat`, `fix`, or `improve` PR, whether scoped or unscoped, with `Public summary: None`
+- title change type appears inconsistent with the changelog body
 - possible user-facing change only discoverable from title/commits, not from `Public summary`
 
 Output format:

@@ -34,7 +34,29 @@ Pi packages run with the permissions granted to Pi. **Only use this package when
 
 `/commit` runs its worker on a side branch of the current session at low thinking, then restores your previous thinking level when it finishes. If you invoke it during an active agent turn, the change-type selector opens immediately; after your selection, the command waits for that turn to settle before starting the worker.
 
-The canonical shared classification rules live in `extensions/changelog/rules.md`.
+### PR title package scopes
+
+Commit messages always keep the unscoped form:
+
+```text
+internal: update PR title generation
+```
+
+PR titles stay unscoped in single-package repositories and workspaces. In a multi-package workspace, the title identifies one primary package by its workspace directory basename:
+
+```text
+internal(changelog): update PR title generation
+```
+
+The worker determines the primary package from the PR's intent and full branch against its base. Incidental shared files such as a lockfile do not override a clear primary package. Root-only, cross-cutting, or ambiguous multi-package changes use `monorepo`:
+
+```text
+internal(monorepo): centralize release tooling
+```
+
+Both scoped and unscoped PR titles are valid changelog inputs. Package scopes are metadata and are not included in public changelog copy.
+
+The canonical shared classification and package-scope rules live in `extensions/changelog/rules.md`.
 
 ## Repository-specific release-note style
 

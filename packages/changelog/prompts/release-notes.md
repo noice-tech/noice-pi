@@ -25,13 +25,14 @@ If `.pi/release-notes-style.md` exists, read it before writing public copy. It i
 
 ## Shared changelog rules
 
-PR title prefixes are `feat:`, `fix:`, `improve:`, and `internal:`.
+Valid PR titles use either unscoped `type: description` or package-scoped `type(package): description` form. The change types are `feat`, `fix`, `improve`, and `internal`.
 
-- `feat:` means users can do something new.
-- `fix:` means a user-visible bug or broken behavior was corrected.
-- `improve:` means an existing user-facing workflow became clearer, faster, smoother, more reliable, or easier to use.
-- `internal:` means the work may matter to development, release, or reliability but is not a public product change.
-- Technical-only TypeScript, build, CI, test, dependency, refactor, and internal error-handling fixes are `internal:` unless corrected behavior is directly user-visible.
+- `feat` means users can do something new.
+- `fix` means a user-visible bug or broken behavior was corrected.
+- `improve` means an existing user-facing workflow became clearer, faster, smoother, more reliable, or easier to use.
+- `internal` means the work may matter to development, release, or reliability but is not a public product change.
+- Technical-only TypeScript, build, CI, test, dependency, refactor, and internal error-handling fixes are `internal` unless corrected behavior is directly user-visible.
+- A package scope, including `monorepo`, is metadata. It does not change the change type and must not be copied into public changelog text.
 - PR titles classify work; they are not the public changelog source.
 - PR body `## Changelog` → `Public summary` is the canonical public changelog atom.
 
@@ -45,7 +46,7 @@ Use sources in this order:
 4. PR title, only for classification or fallback
 5. Commit messages, only as a last fallback
 
-Include meaningful `feat:`, `fix:`, and `improve:` changes whose public summary is not `None`. Skip `internal:` changes and summaries of `None`. Be conservative with fixes.
+Include meaningful `feat`, `fix`, and `improve` changes, whether scoped or unscoped, whose public summary is not `None`. Skip `internal` changes and summaries of `None`. Be conservative with fixes.
 
 ## Public copy
 
