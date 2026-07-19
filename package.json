@@ -13,8 +13,9 @@
     "format": "oxfmt --write",
     "format:check": "oxfmt --check",
     "typecheck": "pnpm -r --if-present typecheck",
-    "test": "pnpm -r --if-present test",
-    "release:prepare": "node scripts/prepare-release.mjs"
+    "test": "node --test scripts/*.test.mjs && pnpm -r --if-present test",
+    "release:prepare": "node scripts/prepare-release.mjs",
+    "release:publish": "node scripts/publish-release.mjs"
   },
   "devDependencies": {
     "oxfmt": "0.59.0"
