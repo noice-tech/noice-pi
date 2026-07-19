@@ -24,12 +24,55 @@ if (!packageName || !workspacePath) {
 const packageDirectory = resolve(repositoryRoot, workspacePath)
 const tempDirectory = mkdtempSync(join(tmpdir(), 'noice-pi-pack-'))
 
+const packageSpecifications = {
+  '@noice-tech/pi-changelog': {
+    required: [
+      'package/package.json',
+      'package/README.md',
+      'package/LICENSE',
+      'package/extensions/changelog/index.ts',
+      'package/extensions/changelog/rules.md',
+      'package/extensions/changelog/worker-prompt.md',
+      'package/prompts/release-notes.md',
+      'package/prompts/setup-release-notes-style.md',
+      'package/prompts/unreleased.md'
+    ],
+    piResources: {
+      extensions: ['./extensions/changelog/index.ts'],
+      prompts: ['./prompts/*.md']
+    },
+    exactArchive: true,
+    dogfoodLocally: true
+  },
+  '@noice-tech/pi-terminal-bell': {
+    required: [
+      'package/package.json',
+      'package/README.md',
+      'package/LICENSE',
+      'package/extensions/terminal-bell/index.ts'
+    ],
+    piResources: {
+      extensions: ['./extensions/terminal-bell/index.ts']
+    },
+    exactArchive: true,
+    dogfoodLocally: true
+  }
+}
+
 function fail(message) {
   throw new Error(message)
 }
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'))
+}
+
+function arraysEqual(actual, expected) {
+  return (
+    Array.isArray(actual) &&
+    actual.length === expected.length &&
+    actual.every((value, index) => value === expected[index])
+  )
 }
 
 try {
@@ -43,6 +86,11 @@ try {
     fail(
       `Workspace package identity mismatch: expected ${packageName}, found ${sourceManifest.name}`
     )
+  }
+
+  const specification = packageSpecifications[packageName]
+  if (!specification) {
+    fail(`No smoke-pack specification configured for ${packageName}`)
   }
 
   execFileSync(
@@ -67,22 +115,7 @@ try {
     .filter(Boolean)
     .map((entry) => entry.replace(/\/$/, ''))
 
-  const requiredByPackage = {
-    '@noice-tech/pi-changelog': [
-      'package/package.json',
-      'package/README.md',
-      'package/LICENSE',
-      'package/extensions/changelog/index.ts',
-      'package/extensions/changelog/rules.md',
-      'package/extensions/changelog/worker-prompt.md',
-      'package/prompts/release-notes.md',
-      'package/prompts/setup-release-notes-style.md',
-      'package/prompts/unreleased.md'
-    ]
-  }
-  const required = requiredByPackage[packageName] ?? ['package/package.json']
-
-  for (const path of required) {
+  for (const path of specification.required) {
     if (!entries.includes(path)) fail(`Packed archive is missing ${path}`)
   }
 
@@ -101,17 +134,19 @@ try {
     if (forbidden) fail(`Packed archive contains forbidden path: ${entry}`)
   }
 
-  if (packageName === '@noice-tech/pi-changelog') {
+  if (specification.exactArchive) {
     const unexpected = entries.filter(
       (entry) =>
         entry !== 'package' &&
-        !required.includes(entry) &&
-        !required.some((path) => path.startsWith(`${entry}/`))
+        !specification.required.includes(entry) &&
+        !specification.required.some((path) => path.startsWith(`${entry}/`))
     )
     if (unexpected.length > 0) {
       fail(`Packed archive contains unexpected paths: ${unexpected.join(', ')}`)
     }
+  }
 
+  if (specification.dogfoodLocally) {
     const settingsPath = join(repositoryRoot, '.pi', 'settings.json')
     const settings = readJson(settingsPath)
     const configuredPaths = Array.isArray(settings.packages)
@@ -136,25 +171,23 @@ try {
     fail('Packed manifest must use public npm access')
   }
 
-  if (packageName === '@noice-tech/pi-changelog') {
-    const extensionPaths = manifest.pi?.extensions
-    const promptPaths = manifest.pi?.prompts
-    if (
-      !Array.isArray(extensionPaths) ||
-      !extensionPaths.includes('./extensions/changelog/index.ts')
-    ) {
-      fail('Packed manifest is missing the Pi extension resource path')
-    }
-    if (
-      !Array.isArray(promptPaths) ||
-      !promptPaths.includes('./prompts/*.md')
-    ) {
-      fail('Packed manifest is missing the Pi prompt resource path')
+  const expectedResourceKeys = Object.keys(specification.piResources).sort()
+  const actualResourceKeys = Object.keys(manifest.pi ?? {}).sort()
+  if (!arraysEqual(actualResourceKeys, expectedResourceKeys)) {
+    fail(
+      `Packed manifest has unexpected Pi resource keys: ${actualResourceKeys.join(', ') || 'none'}`
+    )
+  }
+  for (const [resourceType, expectedPaths] of Object.entries(
+    specification.piResources
+  )) {
+    if (!arraysEqual(manifest.pi?.[resourceType], expectedPaths)) {
+      fail(`Packed manifest has incorrect Pi ${resourceType} resource paths`)
     }
   }
 
   console.log(
-    `Smoke-tested ${archives[0]} as ${packageName} (${required.length} required files)`
+    `Smoke-tested ${archives[0]} as ${packageName} (${specification.required.length} required files)`
   )
 } finally {
   rmSync(tempDirectory, { recursive: true, force: true })
