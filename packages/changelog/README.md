@@ -32,7 +32,7 @@ Pi packages run with the permissions granted to Pi. **Only use this package when
 
 `auto` is accepted only as `/commit` inference input. Changelog and PR classifications are `feat`, `fix`, `improve`, or `internal`.
 
-`/commit` runs its detached worker at low thinking, then restores your previous thinking level when it finishes.
+`/commit` runs its worker on a side branch of the current session at low thinking, then restores your previous thinking level when it finishes.
 
 The canonical shared classification rules live in `extensions/changelog/rules.md`.
 

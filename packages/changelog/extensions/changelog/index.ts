@@ -321,7 +321,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
 }
 
 function showCommitWorkerIndicator(ctx: ExtensionCommandContext) {
-  const message = 'Commit worker is running in detached mode…'
+  const message = 'Commit worker running on a side branch of this session…'
 
   if (ctx.mode !== 'tui') {
     ctx.ui.setWidget(COMMIT_WORKER_WIDGET_KEY, [message])
