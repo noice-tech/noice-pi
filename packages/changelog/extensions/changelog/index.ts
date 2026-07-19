@@ -41,6 +41,7 @@ interface CommitResultDetails {
   status?: CommitDisplayStatus
 }
 
+let commitCommandPending = false
 let commitWorkerRunning = false
 let agentEndWaiter: ((messages: unknown[]) => void) | undefined
 let latestCommitWorkerMessages: unknown[] | undefined
@@ -154,23 +155,34 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
       'Commit changes and create/update PR. Usage: /commit <changeType> <what was done>',
     getArgumentCompletions: getCommitArgumentCompletions,
     handler: async (args, ctx) => {
-      if (commitWorkerRunning) {
-        ctx.ui.notify('Commit worker is already running', 'warning')
+      if (commitCommandPending || commitWorkerRunning) {
+        ctx.ui.notify('Commit command is already active', 'warning')
         return
       }
 
-      await ctx.waitForIdle()
+      commitCommandPending = true
+      let prepared: Awaited<ReturnType<typeof prepareCommit>>
+      try {
+        prepared = await prepareCommit(args, ctx)
+      } catch (error) {
+        commitCommandPending = false
+        throw error
+      }
 
-      const parsed = await resolveChangeTypeAndContext(args, ctx)
-      if (!parsed) {
+      if (!prepared) {
+        commitCommandPending = false
         return
       }
 
+      const { parsed, prompt } = prepared
       const startLeafId = ctx.sessionManager.getLeafId()
-      const prompt = await buildWorkerPrompt(parsed.changeType, parsed.context)
       const previousThinkingLevel = pi.getThinkingLevel()
 
+      // Establish the running guard before releasing the pending guard. Keeping
+      // this transition synchronous prevents a re-entrant command from starting
+      // a second worker and overwriting the singleton agent-end waiter.
       commitWorkerRunning = true
+      commitCommandPending = false
 
       try {
         showCommitWorkerBanner(ctx)
@@ -357,6 +369,29 @@ function getCommitArgumentCompletions(prefix: string) {
         : 'Say what was done — rough wording is fine; leave blank to infer from session/diff'
     }
   ]
+}
+
+async function prepareCommit(
+  args: string | undefined,
+  ctx: ExtensionCommandContext
+) {
+  const parsed = await resolveChangeTypeAndContext(args, ctx)
+  if (!parsed) return null
+
+  if (!ctx.isIdle()) {
+    ctx.ui.notify(
+      'Commit queued; waiting for the current agent turn to finish',
+      'info'
+    )
+  }
+
+  await ctx.waitForIdle()
+  const prompt = await buildWorkerPrompt(parsed.changeType, parsed.context)
+  // Prompt loading is asynchronous. Re-check idle so another user turn cannot
+  // slip in between the original wait and worker startup.
+  await ctx.waitForIdle()
+
+  return { parsed, prompt }
 }
 
 async function resolveChangeTypeAndContext(
