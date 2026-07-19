@@ -3,7 +3,13 @@ import type {
   ExtensionCommandContext
 } from '@earendil-works/pi-coding-agent'
 import { getMarkdownTheme } from '@earendil-works/pi-coding-agent'
-import { Container, Markdown, Spacer, Text } from '@earendil-works/pi-tui'
+import {
+  Container,
+  Loader,
+  Markdown,
+  Spacer,
+  Text
+} from '@earendil-works/pi-tui'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -30,7 +36,7 @@ const CHANGE_TYPE_OPTIONS: Array<{ type: ChangeType; label: string }> = [
 
 const MESSAGE_TYPE = 'noice-changelog-commit-result'
 const PROMPT_MESSAGE_TYPE = 'noice-changelog-commit-worker-prompt'
-const STATUS_KEY = 'noice-changelog'
+const COMMIT_WORKER_WIDGET_KEY = 'noice-changelog-commit-worker'
 
 type CommitDisplayStatus = 'ok' | 'cancelled' | 'failed'
 
@@ -168,12 +174,15 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
 
       const startLeafId = ctx.sessionManager.getLeafId()
       const prompt = await buildWorkerPrompt(parsed.changeType, parsed.context)
+      const previousThinkingLevel = pi.getThinkingLevel()
 
       commitWorkerRunning = true
-      ctx.ui.setStatus(STATUS_KEY, 'running in session branch...')
-      ctx.ui.notify(`Starting commit worker (${parsed.changeType})`, 'info')
 
       try {
+        showCommitWorkerIndicator(ctx)
+        ctx.ui.notify(`Starting commit worker (${parsed.changeType})`, 'info')
+        pi.setThinkingLevel('low')
+
         const agentEnd = waitForNextAgentEndAfterIdle(ctx)
         latestCommitWorkerMessages = undefined
         pi.sendMessage(
@@ -302,10 +311,35 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
         })
         ctx.ui.notify(`Commit worker failed:\n${message}`, 'error')
       } finally {
-        ctx.ui.setStatus(STATUS_KEY, undefined)
+        pi.setThinkingLevel(previousThinkingLevel)
+        ctx.ui.setWidget(COMMIT_WORKER_WIDGET_KEY, undefined)
         commitWorkerRunning = false
         latestCommitWorkerMessages = undefined
       }
+    }
+  })
+}
+
+function showCommitWorkerIndicator(ctx: ExtensionCommandContext) {
+  const message = 'Commit worker is running in detached mode…'
+
+  if (ctx.mode !== 'tui') {
+    ctx.ui.setWidget(COMMIT_WORKER_WIDGET_KEY, [message])
+    return
+  }
+
+  ctx.ui.setWidget(COMMIT_WORKER_WIDGET_KEY, (tui, theme) => {
+    const loader = new Loader(
+      tui,
+      (text) => theme.fg('warning', text),
+      (text) => theme.fg('warning', text),
+      message
+    )
+
+    return {
+      render: (width: number) => loader.render(width),
+      invalidate: () => loader.invalidate(),
+      dispose: () => loader.stop()
     }
   })
 }
