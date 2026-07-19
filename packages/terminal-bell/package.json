@@ -1,0 +1,52 @@
+{
+  "name": "@noice-tech/pi-terminal-bell",
+  "version": "1.0.0",
+  "description": "Terminal bell notifications when Pi is ready.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "terminal",
+    "bell",
+    "notification"
+  ],
+  "files": [
+    "extensions/terminal-bell/index.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noice-tech/noice-pi.git",
+    "directory": "packages/terminal-bell"
+  },
+  "homepage": "https://github.com/noice-tech/noice-pi/tree/main/packages/terminal-bell#readme",
+  "bugs": {
+    "url": "https://github.com/noice-tech/noice-pi/issues"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run && node ../../scripts/smoke-pack.mjs @noice-tech/pi-terminal-bell packages/terminal-bell"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.80.10",
+    "@types/node": "22.20.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/terminal-bell/index.ts"
+    ]
+  }
+}

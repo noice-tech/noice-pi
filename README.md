@@ -4,17 +4,19 @@ Public MIT-licensed [Pi](https://github.com/earendil-works/pi) packages from Noi
 
 ## Packages
 
-| Package                                          | Description                                                                  |
-| ------------------------------------------------ | ---------------------------------------------------------------------------- |
-| [`@noice-tech/pi-changelog`](packages/changelog) | Commit, pull request, changelog preview, and release-notes workflows for Pi. |
+| Package                                                  | Description                                                                  |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| [`@noice-tech/pi-changelog`](packages/changelog)         | Commit, pull request, changelog preview, and release-notes workflows for Pi. |
+| [`@noice-tech/pi-terminal-bell`](packages/terminal-bell) | Terminal bell notifications when Pi is ready.                                |
 
-Install a package from npm in the repository where you want to use it:
+Install the package you want from npm in the repository where you want to use it:
 
 ```bash
 pi install npm:@noice-tech/pi-changelog
+pi install npm:@noice-tech/pi-terminal-bell
 ```
 
-See the [package README](packages/changelog/README.md) for commands, prerequisites, permissions, and behavior.
+See each package README for its commands, prerequisites, permissions, and behavior.
 
 ## Development
 
@@ -25,7 +27,7 @@ pnpm install
 pnpm check
 ```
 
-The root workspace is private and is not published. Local Pi settings load `../packages/changelog` relative to `.pi/settings.json` for dogfooding; `.pi` is excluded from the package tarball by its strict files allowlist.
+The root workspace is private and is not published. Local Pi settings load both workspace packages relative to `.pi/settings.json` for dogfooding; `.pi`, tests, and development configuration are excluded from package tarballs by strict files allowlists.
 
 ## Publishing
 
