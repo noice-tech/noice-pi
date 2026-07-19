@@ -3,13 +3,7 @@ import type {
   ExtensionCommandContext
 } from '@earendil-works/pi-coding-agent'
 import { getMarkdownTheme } from '@earendil-works/pi-coding-agent'
-import {
-  Container,
-  Loader,
-  Markdown,
-  Spacer,
-  Text
-} from '@earendil-works/pi-tui'
+import { Container, Markdown, Spacer, Text } from '@earendil-works/pi-tui'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -179,7 +173,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
       commitWorkerRunning = true
 
       try {
-        showCommitWorkerIndicator(ctx)
+        showCommitWorkerBanner(ctx)
         ctx.ui.notify(`Starting commit worker (${parsed.changeType})`, 'info')
         pi.setThinkingLevel('low')
 
@@ -320,7 +314,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
   })
 }
 
-function showCommitWorkerIndicator(ctx: ExtensionCommandContext) {
+function showCommitWorkerBanner(ctx: ExtensionCommandContext) {
   const message = 'Commit worker running on a side branch of this session…'
 
   if (ctx.mode !== 'tui') {
@@ -328,20 +322,10 @@ function showCommitWorkerIndicator(ctx: ExtensionCommandContext) {
     return
   }
 
-  ctx.ui.setWidget(COMMIT_WORKER_WIDGET_KEY, (tui, theme) => {
-    const loader = new Loader(
-      tui,
-      (text) => theme.fg('warning', text),
-      (text) => theme.fg('warning', text),
-      message
-    )
-
-    return {
-      render: (width: number) => loader.render(width),
-      invalidate: () => loader.invalidate(),
-      dispose: () => loader.stop()
-    }
-  })
+  ctx.ui.setWidget(
+    COMMIT_WORKER_WIDGET_KEY,
+    (_tui, theme) => new Text(theme.fg('warning', message), 1, 0)
+  )
 }
 
 function getCommitArgumentCompletions(prefix: string) {
