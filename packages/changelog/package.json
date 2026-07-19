@@ -31,7 +31,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit --allowImportingTsExtensions --moduleResolution bundler --module ESNext --target ES2022 --skipLibCheck extensions/changelog/index.ts",
-    "test": "node ../../scripts/smoke-pack.mjs @noice-tech/pi-changelog packages/changelog"
+    "test": "node --test test/*.test.mjs && node ../../scripts/smoke-pack.mjs @noice-tech/pi-changelog packages/changelog"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
