@@ -1,3 +1,6 @@
 node_modules/
+.pnpm-store/
 .DS_Store
 .pi/tmp/
+.pi-subagents/
+*.tgz

@@ -1,35 +1,22 @@
 {
-  "name": "@noice-tech/pi-release-notes",
-  "version": "0.5.0",
+  "name": "noice-pi",
   "private": true,
-  "type": "module",
-  "description": "Noice Tech Pi release notes workflow for commit, PR, and public release copy conventions.",
+  "description": "Noice Pi packages",
+  "license": "MIT",
+  "engines": {
+    "node": "24.13.0",
+    "pnpm": "11.3.0"
+  },
+  "packageManager": "pnpm@11.3.0",
   "scripts": {
-    "typecheck": "tsc --noEmit --allowImportingTsExtensions --moduleResolution bundler --module ESNext --target ES2022 --skipLibCheck extensions/changelog/index.ts"
-  },
-  "keywords": [
-    "pi-package",
-    "noice-tech",
-    "pi",
-    "release-notes",
-    "changelog"
-  ],
-  "license": "UNLICENSED",
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.75.5",
-    "@earendil-works/pi-tui": ">=0.75.5"
-  },
-  "pi": {
-    "extensions": [
-      "./extensions/changelog/index.ts"
-    ],
-    "prompts": [
-      "./prompts/*.md"
-    ]
+    "check": "pnpm format:check && pnpm typecheck && pnpm test",
+    "format": "oxfmt --write",
+    "format:check": "oxfmt --check",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "release:prepare": "node scripts/prepare-release.mjs"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.75.5",
-    "@earendil-works/pi-tui": "^0.75.5",
-    "typescript": "^6.0.3"
+    "oxfmt": "0.59.0"
   }
 }

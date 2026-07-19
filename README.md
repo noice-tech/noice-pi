@@ -1,146 +1,32 @@
-# @noice-tech/pi-release-notes
+# Noice Pi
 
-Noice Tech Pi package for release notes-aware commit, PR, and public release copy workflows.
+Public MIT-licensed [Pi](https://github.com/earendil-works/pi) packages from Noice Tech.
 
-## What it installs
+## Packages
 
-- `/commit` extension command that commits current changes and creates/updates the GitHub PR using Noice changelog rules.
-- `/unreleased` prompt template that previews release-worthy PR changelog data since the latest git tag.
-- `/release-notes` prompt template that generates public release notes/social copy from GitHub releases or tag ranges.
-- `/setup-release-notes-style` prompt template that helps create repo-specific release notes voice and formatting guidance for `/release-notes`.
+| Package                                          | Description                                                                  |
+| ------------------------------------------------ | ---------------------------------------------------------------------------- |
+| [`@noice-tech/pi-changelog`](packages/changelog) | Commit, pull request, changelog preview, and release-notes workflows for Pi. |
 
-## Install in a repo
+Install a package from npm in the repository where you want to use it:
 
 ```bash
-pi install -l git:git@github.com:noice-tech/pi-release-notes.git@main
+pi install npm:@noice-tech/pi-changelog
 ```
 
-This writes the package to project `.pi/settings.json`. Commit that file so Pi auto-installs the package for everyone who opens the repo.
+See the [package README](packages/changelog/README.md) for commands, prerequisites, permissions, and behavior.
 
-Expected project settings:
+## Development
 
-```json
-{
-  "packages": [
-    "git:git@github.com:noice-tech/pi-release-notes.git@main"
-  ]
-}
+Use Node 24.13.0 and pnpm 11.3.0.
+
+```bash
+pnpm install
+pnpm check
 ```
 
-## Commands
+The root workspace is private and is not published. Local Pi settings load `../packages/changelog` relative to `.pi/settings.json` for dogfooding; `.pi` is excluded from the package tarball by its strict files allowlist.
 
-```txt
-/commit [auto|feat|fix|improve|internal|ignore] [optional context]
-/unreleased
-/release-notes <version | from..to>
-/setup-release-notes-style [product/audience/channel notes]
-```
+## Publishing
 
-Examples:
-
-```txt
-/commit improve speed up editor boot by lazy-loading templates
-/unreleased
-/release-notes 5.0.2..5.0.5
-/setup-release-notes-style Discord and X, concise, friendly, existing users of Noice
-```
-
-## Changelog rules
-
-The canonical rules live in `extensions/changelog/rules.md`.
-
-The `/commit` command embeds those rules into the worker prompt at runtime. The `/release-notes` prompt repeats the relevant rules because Pi prompt templates are static markdown.
-
-These package rules define the shared workflow across `/commit`, `/unreleased`, and `/release-notes`:
-
-- change types: `feat:`, `fix:`, `improve:`, `internal:`, `ignore:`
-- what counts as user-facing
-- PR changelog section format
-- source priority for release generation
-- privacy constraints for public output
-
-## Per-repo release notes style
-
-Repos can add product-specific release notes style guidance for humans and for `/release-notes` at:
-
-```txt
-docs-for-devs/release-notes-style.md
-```
-
-Use this file for repo-specific editorial guidance, such as:
-
-- audience
-- brand language and tone
-- product terminology
-- social media format
-- emoji conventions
-- bullet style
-- examples of good and bad public release notes copy
-
-The `/release-notes` prompt checks for repo-specific instructions in this order:
-
-1. `docs-for-devs/release-notes-style.md`
-2. `.pi/release-notes-style.md`
-3. a README section named `Release notes style`, `Release changelog style`, or `Changelog style`
-
-Repo-specific instructions may define voice and public-output formatting, but they should not override the package rules for change classification, source priority, privacy, or excluding internal implementation details.
-
-Without repo-specific instructions, `/release-notes` uses a minimal default public format: only a plain Markdown bullet list of public summaries.
-
-Suggested repo README link:
-
-```md
-## Release notes style
-
-Humans and `/release-notes` should follow
-[docs-for-devs/release-notes-style.md](docs-for-devs/release-notes-style.md).
-```
-
-Suggested `docs-for-devs/release-notes-style.md` starter:
-
-```md
-# Release notes style
-
-These instructions are for humans and for `/release-notes`.
-
-## Audience
-
-Write for existing users of <Product> reading updates on Discord and X.
-
-## Voice
-
-Use:
-- direct, concrete language
-- short sentences
-- a confident but not hypey tone
-
-Avoid:
-- startup marketing language
-- vague claims like “better experience”
-- internal implementation details
-
-## Product language
-
-Use:
-- “<preferred term>” instead of “<internal term>”
-
-Avoid:
-- internal codenames
-- backend/system terms
-
-## Bullet style
-
-Bullets should be:
-- one sentence each
-- specific
-- user-facing
-- short enough for social posts
-
-Good:
-- You can now export clips with branded end cards.
-- Hidden tracks no longer appear in exported videos.
-
-Bad:
-- Improved export experience.
-- Fixed renderer bug.
-```
+Maintainers should read [CONTRIBUTING.md](CONTRIBUTING.md) for release preparation and first-publication instructions. The release script creates and pushes a release commit and tag, but never publishes to npm.

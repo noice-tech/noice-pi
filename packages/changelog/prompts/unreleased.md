@@ -1,6 +1,6 @@
 ---
 description: preview unreleased changelog candidates since the latest git tag
-argument-hint: ""
+argument-hint: ''
 ---
 
 Preview what would go into a new release from merged PRs since the latest git tag. Do not create tags, releases, commits, branches, PRs, or files. Reply directly in chat only.
@@ -12,12 +12,11 @@ Ignore arguments if provided. This command previews the current unreleased state
 
 Follow these shared changelog rules exactly:
 
-- PR title prefixes: `feat:`, `fix:`, `improve:`, `internal:`, `ignore:`.
+- PR title prefixes: `feat:`, `fix:`, `improve:`, and `internal:`.
 - `feat:` means users can do something new.
 - `fix:` means a user-visible bug or broken behavior was corrected.
 - `improve:` means an existing user-facing workflow became clearer, faster, smoother, more reliable, or easier to use.
 - `internal:` means the work may matter to development/release/reliability but is not a public product change.
-- `ignore:` means the work should not appear in release or public changelog narratives.
 - Do not use technical-only fixes as public fixes. TypeScript, build, CI, test, dependency, refactor, and internal error-handling fixes are `internal:` unless the corrected behavior is directly user-visible.
 - PR titles are classification/review metadata. They are not the public changelog source.
 - PR body `## Changelog` → `Public summary` is the canonical public changelog atom.
@@ -43,7 +42,7 @@ Workflow:
 Public candidate rules:
 
 - Include `feat:`, `fix:`, and `improve:` PRs when `Public summary` contains a meaningful user-facing summary.
-- Skip `internal:` and `ignore:` PRs by default.
+- Skip `internal:` PRs by default.
 - Skip PRs where `Public summary` is `None`.
 - Be conservative with `fix:`. Include only user-visible fixes, not technical/build/CI/test/refactor/dependency fixes.
 - Use `Public summary` text as the candidate release bullet when available.
