@@ -1,6 +1,6 @@
 {
   "name": "@noice-tech/pi-changelog",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Pi changelog workflow for commits, pull requests, and public release notes.",
   "type": "module",
   "license": "MIT",
