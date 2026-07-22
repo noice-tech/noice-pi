@@ -1,6 +1,6 @@
 # @noice-tech/pi-changelog
 
-A Pi package for release-aware commits, pull requests, unreleased previews, and public release notes.
+Capture release intent in each PR, preview unreleased work, and generate public notes without exposing private repository details.
 
 ## Install
 
@@ -8,75 +8,51 @@ A Pi package for release-aware commits, pull requests, unreleased previews, and 
 pi install npm:@noice-tech/pi-changelog
 ```
 
-Commit the resulting `.pi/settings.json` change so Pi installs the package for collaborators.
-
-## Prerequisites and trust
-
-The workflows expect:
-
-- Git
-- [GitHub CLI](https://cli.github.com/) authenticated for the repository
-- Bash and `jq`
-- a shell that supports process substitution for the documented `gh api` PR-update flow
-
-Pi packages run with the permissions granted to Pi. **Only use this package when you trust it with full system permissions and repository access.** In particular, `/commit` inspects changes, creates commits, pushes branches, and creates or updates GitHub pull requests.
+Commit `.pi/settings.json` when collaborators should use the package too.
 
 ## Commands
 
-```text
-/commit [auto|feat|fix|improve|internal] [optional context]
-/unreleased
-/release-notes <version | from..to>
-/setup-release-notes-style [product/audience/channel notes]
-```
+| Command                                                  | What it does                                                                                                        |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `/commit [auto\|feat\|fix\|improve\|internal] [summary]` | Commits and pushes the current changes, creates or updates the PR, and records its public summary.                  |
+| `/unreleased`                                            | Audits work since the latest tag as public, internal, or needing cleanup. Changes no project files or GitHub state. |
+| `/release-notes <version \| tag \| from..to>`            | Writes public release notes and a separate private source audit for a tag or range.                                 |
+| `/setup-release-notes-style [notes]`                     | Creates or refines `.pi/release-notes-style.md` with repository-specific voice and formatting.                      |
 
-`auto` is accepted only as `/commit` inference input. Changelog and PR classifications are `feat`, `fix`, `improve`, or `internal`.
-
-`/commit` runs its worker on a side branch of the current session at low thinking, then restores your previous thinking level when it finishes. If you invoke it during an active agent turn, the change-type selector opens immediately; after your selection, the command waits for that turn to settle before starting the worker.
-
-### PR title package scopes
-
-Commit messages always keep the unscoped form:
+## From commit to changelog
 
 ```text
-internal: update PR title generation
+Code changes
+  → /commit creates a typed commit and PR with a Public summary
+  → merge the PR
+  → /unreleased previews changes since the latest tag
+  → tag and create a GitHub Release with your normal release process
+  → /release-notes writes public copy and private source notes
 ```
 
-PR titles stay unscoped in single-package repositories and workspaces. In a multi-package workspace, the title identifies one primary package by its workspace directory basename:
+The PR's `Public summary` is the canonical changelog source. Release notes fall back through `PR Context → GitHub Release body → PR title → commit message`. Internal changes and summaries marked `None` stay out of public copy.
 
-```text
-internal(changelog): update PR title generation
-```
+## Change types
 
-The worker determines the primary package from the PR's intent and full branch against its base. Incidental shared files such as a lockfile do not override a clear primary package. Root-only, cross-cutting, or ambiguous multi-package changes use `monorepo`:
+- `feat` — new user-facing capability
+- `fix` — user-visible bug fix
+- `improve` — better, faster, or more reliable user workflow
+- `internal` — tooling, infrastructure, tests, refactors, or dependencies
+- `auto` — let `/commit` infer one of the types above
 
-```text
-internal(monorepo): centralize release tooling
-```
+Commits always use `type: description`. Multi-package PR titles use `type(package): description`, or `monorepo` for cross-cutting work. Scopes never appear in public copy. See the [full rules](extensions/changelog/rules.md).
 
-Both scoped and unscoped PR titles are valid changelog inputs. Package scopes are metadata and are not included in public changelog copy.
+## Output and privacy
 
-The canonical shared classification and package-scope rules live in `extensions/changelog/rules.md`.
+`/release-notes 1.2.3` creates or overwrites:
 
-## Repository-specific release-note style
+- `release-notes/1.2.3.md` — public copy
+- `.pi/tmp/pi-changelog/release-notes-sources/1.2.3.md` — private source audit
 
-Run `/setup-release-notes-style` to create or refine the only canonical repository-specific convention:
+Other inputs use a filesystem-safe slug derived from the argument. The public file excludes GitHub links, PR numbers, commit hashes, private URLs, and internal notes. Keep `.pi/tmp/` ignored and unpublished. When `.pi/release-notes-style.md` is absent, the public file is a plain Markdown bullet list.
 
-```text
-.pi/release-notes-style.md
-```
+## Requirements and side effects
 
-`/release-notes` reads that file when present. It otherwise emits a plain Markdown bullet list.
-
-## Release-note output
-
-`/release-notes 1.2.3` uses a deterministic slug and writes two separate files:
-
-- public copy: `release-notes/1.2.3.md`
-- private review sources: `.pi/tmp/pi-changelog/release-notes-sources/1.2.3.md`
-
-The public artifact never contains PR numbers, commit hashes, private URLs, or internal source notes. The `.pi/tmp/` source file is an ephemeral private-review aid. Keep `.pi/tmp/` ignored by Git and unpublished; the prompt does not edit a consumer repository's `.gitignore`.
-
-## Package contents
-
-The npm package distributes the Pi manifest together with raw TypeScript and Markdown extension/prompt assets. No build step is required.
+- Git and an authenticated [GitHub CLI](https://cli.github.com/) are required for `/commit`, `/unreleased`, and `/release-notes`.
+- `/commit` uses Bash and `jq`; it can create a branch, commit, push, and create or update a PR.
+- `/unreleased` fetches tags but changes no source or GitHub state. `/release-notes` overwrites its two output files.
