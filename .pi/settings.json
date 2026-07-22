@@ -1,3 +1,7 @@
 {
-  "packages": ["../packages/changelog", "../packages/terminal-bell"]
+  "packages": [
+    "../packages/changelog",
+    "../packages/terminal-bell",
+    "../packages/work-context"
+  ]
 }
