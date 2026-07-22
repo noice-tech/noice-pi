@@ -1,0 +1,52 @@
+{
+  "name": "@noice-tech/pi-github-issues",
+  "version": "1.0.3",
+  "description": "GitHub issue planning launcher for Pi.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "github",
+    "issues",
+    "planning"
+  ],
+  "files": [
+    "extensions/github-issues/index.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noice-tech/noice-pi.git",
+    "directory": "packages/github-issues"
+  },
+  "homepage": "https://github.com/noice-tech/noice-pi/tree/main/packages/github-issues#readme",
+  "bugs": {
+    "url": "https://github.com/noice-tech/noice-pi/issues"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs && node ../../scripts/smoke-pack.mjs @noice-tech/pi-github-issues packages/github-issues"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.80.10",
+    "@earendil-works/pi-tui": "0.80.10",
+    "typescript": "6.0.3"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/github-issues/index.ts"
+    ]
+  }
+}

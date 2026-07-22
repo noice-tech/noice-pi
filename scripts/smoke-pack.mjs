@@ -44,6 +44,19 @@ const packageSpecifications = {
     exactArchive: true,
     dogfoodLocally: true
   },
+  '@noice-tech/pi-github-issues': {
+    required: [
+      'package/package.json',
+      'package/README.md',
+      'package/LICENSE',
+      'package/extensions/github-issues/index.ts'
+    ],
+    piResources: {
+      extensions: ['./extensions/github-issues/index.ts']
+    },
+    exactArchive: true,
+    dogfoodLocally: true
+  },
   '@noice-tech/pi-terminal-bell': {
     required: [
       'package/package.json',
