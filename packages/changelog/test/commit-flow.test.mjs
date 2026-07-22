@@ -149,7 +149,12 @@ test('/commit selects immediately, then waits for the active turn', async () => 
     deliverAs: 'followUp'
   })
   assert.match(prompt.message.content, /Selected change type:\s*fix/)
-  assert.deepEqual(thinkingLevels, ['low', 'high'])
+  assert.deepEqual(
+    thinkingLevels,
+    [],
+    '/commit must preserve the user-selected thinking level'
+  )
+  assert.equal(thinkingLevel, 'high')
   assert.ok(events.indexOf('select') < events.indexOf('waitForIdle'))
   assert.ok(
     events.indexOf('waitForIdle') <

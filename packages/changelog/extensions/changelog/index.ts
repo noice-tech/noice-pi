@@ -176,7 +176,6 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
 
       const { parsed, prompt } = prepared
       const startLeafId = ctx.sessionManager.getLeafId()
-      const previousThinkingLevel = pi.getThinkingLevel()
 
       // Establish the running guard before releasing the pending guard. Keeping
       // this transition synchronous prevents a re-entrant command from starting
@@ -187,7 +186,6 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
       try {
         showCommitWorkerBanner(ctx)
         ctx.ui.notify(`Starting commit worker (${parsed.changeType})`, 'info')
-        pi.setThinkingLevel('low')
 
         const agentEnd = waitForNextAgentEndAfterIdle(ctx)
         latestCommitWorkerMessages = undefined
@@ -317,7 +315,6 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
         })
         ctx.ui.notify(`Commit worker failed:\n${message}`, 'error')
       } finally {
-        pi.setThinkingLevel(previousThinkingLevel)
         ctx.ui.setWidget(COMMIT_WORKER_WIDGET_KEY, undefined)
         commitWorkerRunning = false
         latestCommitWorkerMessages = undefined
