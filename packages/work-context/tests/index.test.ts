@@ -9,6 +9,7 @@ import {
   composeTitle,
   createWorkContext,
   parseGitContext,
+  parseLocalChanges,
   parsePullRequest,
   summarizeChecks,
   type PullRequest
@@ -24,6 +25,23 @@ const GIT_OUTPUT = [
   '/projects/repo/.git',
   '/projects/repo/.git/worktrees/work-context'
 ].join('\n')
+const HASH = '0123456789012345678901234567890123456789'
+
+function porcelain(...records: string[]): string {
+  return `${records.join('\0')}\0`
+}
+
+function ordinary(path: string, status = '.M'): string {
+  return `1 ${status} N... 100644 100644 100644 ${HASH} ${HASH} ${path}`
+}
+
+function renamed(path: string, score = 'R100'): string {
+  return `2 ${score[0]}. N... 100644 100644 100644 ${HASH} ${HASH} ${score} ${path}`
+}
+
+function unmerged(path: string): string {
+  return `u UU N... 100644 100644 100644 100644 ${HASH} ${HASH} ${HASH} ${path}`
+}
 
 function pullRequestJson(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -65,6 +83,7 @@ async function flushBackground() {
 interface HarnessOptions {
   sessionName?: string
   gitOutput?: string
+  statusOutput?: string
   ghOutput?: string
   pollIntervalMs?: number
   mode?: ExtensionContext['mode']
@@ -73,6 +92,7 @@ interface HarnessOptions {
 function createHarness(options: HarnessOptions = {}) {
   let sessionName = options.sessionName
   let gitOutput = 'gitOutput' in options ? options.gitOutput : GIT_OUTPUT
+  let statusOutput = 'statusOutput' in options ? options.statusOutput : ''
   let ghOutput = 'ghOutput' in options ? options.ghOutput : pullRequestJson()
   let widgetContent: unknown
   let headChange: (() => void) | undefined
@@ -81,8 +101,13 @@ function createHarness(options: HarnessOptions = {}) {
   const handlers = new Map<string, Handler>()
   const titles: string[] = []
 
-  const exec = vi.fn(async (command: string) => {
-    const output = command === 'git' ? gitOutput : ghOutput
+  const exec = vi.fn(async (command: string, args: string[]) => {
+    const output =
+      command === 'gh'
+        ? ghOutput
+        : args.includes('status')
+          ? statusOutput
+          : gitOutput
     return {
       code: output === undefined ? 1 : 0,
       stdout: output ?? '',
@@ -151,6 +176,9 @@ function createHarness(options: HarnessOptions = {}) {
     },
     setGitOutput(output: string | undefined) {
       gitOutput = output
+    },
+    setStatusOutput(output: string | undefined) {
+      statusOutput = output
     },
     setSessionName(name: string | undefined) {
       sessionName = name
@@ -233,6 +261,54 @@ describe('context parsing and title composition', () => {
   })
 })
 
+describe('local Git status parsing', () => {
+  it('counts unique index, working-tree, and untracked paths while ignoring ignored files', () => {
+    expect(
+      parseLocalChanges(
+        porcelain(
+          ordinary('staged.ts', 'M.'),
+          ordinary('working tree.ts'),
+          ordinary('both.ts', 'MM'),
+          ordinary('both.ts', 'MM'),
+          '? new file.ts',
+          '? new file.ts',
+          '! ignored.log'
+        )
+      )
+    ).toEqual({ changed: 4, untracked: 1, conflicts: 0 })
+  })
+
+  it('counts renames and copies once and consumes their second NUL path', () => {
+    expect(
+      parseLocalChanges(
+        porcelain(
+          renamed('renamed file.ts'),
+          '? old name that resembles a record',
+          renamed('copied.ts', 'C075'),
+          'source.ts'
+        )
+      )
+    ).toEqual({ changed: 2, untracked: 0, conflicts: 0 })
+  })
+
+  it('counts unmerged entries as both changed files and conflicts', () => {
+    expect(
+      parseLocalChanges(
+        porcelain(
+          unmerged('conflicted file.ts'),
+          unmerged('second.ts'),
+          '? new.ts'
+        )
+      )
+    ).toEqual({ changed: 3, untracked: 1, conflicts: 2 })
+    expect(parseLocalChanges('')).toEqual({
+      changed: 0,
+      untracked: 0,
+      conflicts: 0
+    })
+  })
+})
+
 describe('GitHub check aggregation', () => {
   it('aggregates check runs and status contexts', () => {
     expect(
@@ -270,7 +346,12 @@ describe('GitHub check aggregation', () => {
 describe('work-context extension behavior', () => {
   it('discovers once in the background and drives title and widget from the shared result', async () => {
     const harness = createHarness({
-      sessionName: '#6 — Add searchable GitHub issue planning'
+      sessionName: '#6 — Add searchable GitHub issue planning',
+      statusOutput: porcelain(
+        ordinary('tracked.ts'),
+        '? first new.ts',
+        '? second new.ts'
+      )
     })
 
     await harness.emit('session_start', { reason: 'startup' })
@@ -295,6 +376,21 @@ describe('work-context extension behavior', () => {
     )
     expect(harness.exec).toHaveBeenNthCalledWith(
       2,
+      'git',
+      [
+        '--no-optional-locks',
+        'status',
+        '--porcelain=v2',
+        '-z',
+        '--untracked-files=all'
+      ],
+      {
+        cwd: '/projects/worktrees/repo/work-context/repo',
+        timeout: 5_000
+      }
+    )
+    expect(harness.exec).toHaveBeenNthCalledWith(
+      3,
       'gh',
       [
         'pr',
@@ -316,6 +412,7 @@ describe('work-context extension behavior', () => {
       { placement: 'belowEditor' }
     )
     const [line] = harness.renderWidget() ?? []
+    expect(line).toContain('Changes 3 · 2 untracked')
     expect(line).toContain('PR ●')
     expect(line).toContain('#42 ↗')
     expect(line).toContain('CI ✓ 2/2')
@@ -334,7 +431,7 @@ describe('work-context extension behavior', () => {
     const harness = createHarness()
     await harness.emit('session_start', { reason: 'resume' })
     await flushBackground()
-    expect(harness.exec).toHaveBeenCalledTimes(2)
+    expect(harness.exec).toHaveBeenCalledTimes(3)
 
     await harness.emit('session_info_changed', {
       name: '#6 — Add searchable GitHub issue planning'
@@ -343,7 +440,7 @@ describe('work-context extension behavior', () => {
     expect(harness.titles.at(-1)).toBe(
       '#6 — Add searchable GitHub issue planning · PR #42'
     )
-    expect(harness.exec).toHaveBeenCalledTimes(2)
+    expect(harness.exec).toHaveBeenCalledTimes(3)
   })
 
   it.each(['rpc', 'json', 'print'] satisfies ExtensionContext['mode'][])(
@@ -360,7 +457,7 @@ describe('work-context extension behavior', () => {
     }
   )
 
-  it('falls back quietly from gh to the stable worktree title', async () => {
+  it('hides the clean state and falls back quietly without GitHub context', async () => {
     const harness = createHarness({ ghOutput: undefined })
     await harness.emit('session_start', { reason: 'startup' })
     await flushBackground()
@@ -369,7 +466,67 @@ describe('work-context extension behavior', () => {
     expect(harness.widgetContent).toBeUndefined()
   })
 
-  it('refreshes externally changed PR and CI state while idle', async () => {
+  it('uses singular wording for one changed and untracked file', async () => {
+    const harness = createHarness({
+      ghOutput: undefined,
+      statusOutput: porcelain('? only new file.ts')
+    })
+    await harness.emit('session_start', { reason: 'startup' })
+    await flushBackground()
+
+    expect(harness.renderWidget()?.[0]).toContain('Change 1 · 1 untracked')
+  })
+
+  it('shows local-only counts with singular wording and conflict-first degradation', async () => {
+    const harness = createHarness({
+      ghOutput: undefined,
+      statusOutput: porcelain(unmerged('conflict.ts'), '? new file.ts')
+    })
+    await harness.emit('session_start', { reason: 'startup' })
+    await flushBackground()
+
+    expect(harness.renderWidget()?.[0]).toContain(
+      '1 conflict · Changes 2 · 1 untracked'
+    )
+    const [narrowLine] = harness.renderWidget(10) ?? []
+    expect(narrowLine).toContain('1 conflict')
+    expect(visibleWidth(narrowLine ?? '')).toBeLessThanOrEqual(10)
+  })
+
+  it('degrades non-conflict details before truncating the changed-file count', async () => {
+    const harness = createHarness({
+      ghOutput: undefined,
+      statusOutput: porcelain(
+        ordinary('one.ts'),
+        ordinary('two.ts'),
+        ordinary('three.ts'),
+        ordinary('four.ts'),
+        ordinary('five.ts'),
+        '? six.ts',
+        '? seven.ts'
+      )
+    })
+    await harness.emit('session_start', { reason: 'startup' })
+    await flushBackground()
+
+    expect(harness.renderWidget()?.[0]).toContain('Changes 7 · 2 untracked')
+    expect(harness.renderWidget(9)?.[0]).toContain('Changes 7')
+    expect(visibleWidth(harness.renderWidget(9)?.[0] ?? '')).toBe(9)
+  })
+
+  it('keeps PR and CI context when local status discovery fails', async () => {
+    const harness = createHarness({ statusOutput: undefined })
+    await harness.emit('session_start', { reason: 'startup' })
+    await flushBackground()
+
+    const [line] = harness.renderWidget() ?? []
+    expect(line).toContain('PR ●')
+    expect(line).toContain('CI ✓ 2/2')
+    expect(line).not.toContain('Changes')
+    expect(harness.titles.at(-1)).toBe('#42 — Ship work context')
+  })
+
+  it('refreshes externally changed PR, CI, and local state while idle', async () => {
     vi.useFakeTimers()
     const harness = createHarness({ pollIntervalMs: 1_000 })
     await harness.emit('session_start', { reason: 'startup' })
@@ -393,11 +550,51 @@ describe('work-context extension behavior', () => {
         ]
       })
     )
+    harness.setStatusOutput(
+      porcelain(ordinary('tracked.ts'), '? first.ts', '? second.ts')
+    )
     await vi.advanceTimersByTimeAsync(1_000)
     await flushBackground()
 
     expect(harness.titles.at(-1)).toBe('✓ #42 — Ship work context')
     expect(harness.renderWidget()?.[0]).toContain('CI × 1/2')
+    expect(harness.renderWidget()?.[0]).toContain('Changes 3 · 2 untracked')
+  })
+
+  it('presents local status without waiting for GitHub discovery', async () => {
+    let resolveGh: ((value: string) => void) | undefined
+    const ghResult = new Promise<string>((resolve) => {
+      resolveGh = resolve
+    })
+    const harness = createHarness()
+    harness.exec.mockImplementation(async (command: string, args: string[]) => {
+      if (command === 'gh') {
+        return {
+          code: 0,
+          stdout: await ghResult,
+          stderr: '',
+          killed: false
+        }
+      }
+      return {
+        code: 0,
+        stdout: args.includes('status')
+          ? porcelain(ordinary('changed.ts'))
+          : GIT_OUTPUT,
+        stderr: '',
+        killed: false
+      }
+    })
+
+    await harness.emit('session_start', { reason: 'startup' })
+    await flushBackground()
+
+    expect(harness.renderWidget()?.[0]).toContain('Change 1')
+    expect(harness.titles.at(-1)).toBe('work-context')
+
+    await harness.emit('session_shutdown', { reason: 'quit' })
+    resolveGh?.(pullRequestJson())
+    await flushBackground()
   })
 
   it('coalesces poll ticks while discovery is still running', async () => {
@@ -440,7 +637,9 @@ describe('work-context extension behavior', () => {
     expect(ghCalls).toBe(2)
     expect(harness.exec.mock.calls.map(([command]) => command)).toEqual([
       'git',
+      'git',
       'gh',
+      'git',
       'git',
       'gh'
     ])
@@ -503,14 +702,73 @@ describe('work-context extension behavior', () => {
     expect(harness.titles.at(-1)).toBe('work-context')
   })
 
-  it('invalidates branch-bound PR data on HEAD changes and cleans up', async () => {
+  it('rejects an in-flight local status result after HEAD changes', async () => {
     vi.useFakeTimers()
-    const harness = createHarness({ pollIntervalMs: 1_000 })
+    let finishStaleStatus: (() => void) | undefined
+    const staleStatus = new Promise<void>((resolve) => {
+      finishStaleStatus = resolve
+    })
+    let statusCalls = 0
+    const harness = createHarness({ ghOutput: undefined })
+    harness.exec.mockImplementation(async (command: string, args: string[]) => {
+      if (command === 'gh') {
+        return {
+          code: 1,
+          stdout: '',
+          stderr: 'unavailable',
+          killed: false
+        }
+      }
+      if (!args.includes('status')) {
+        return {
+          code: 0,
+          stdout: GIT_OUTPUT,
+          stderr: '',
+          killed: false
+        }
+      }
+
+      statusCalls += 1
+      if (statusCalls === 2) {
+        await staleStatus
+        return {
+          code: 0,
+          stdout: porcelain(ordinary('stale.ts')),
+          stderr: '',
+          killed: false
+        }
+      }
+      return { code: 0, stdout: '', stderr: '', killed: false }
+    })
+
+    await harness.emit('session_start', { reason: 'startup' })
+    await flushBackground()
+    await harness.emit('agent_settled')
+    await flushBackground()
+    expect(statusCalls).toBe(2)
+
+    harness.headChange()
+    await vi.advanceTimersByTimeAsync(100)
+    finishStaleStatus?.()
+    await flushBackground()
+
+    expect(statusCalls).toBe(3)
+    expect(harness.widgetContent).toBeUndefined()
+  })
+
+  it('invalidates branch-bound PR and local data on HEAD changes and cleans up', async () => {
+    vi.useFakeTimers()
+    const harness = createHarness({
+      pollIntervalMs: 1_000,
+      statusOutput: porcelain(ordinary('changed.ts'))
+    })
     await harness.emit('session_start', { reason: 'startup' })
     await flushBackground()
     expect(harness.titles.at(-1)).toBe('#42 — Ship work context')
+    expect(harness.renderWidget()?.[0]).toContain('Change 1')
 
     harness.setGhOutput(undefined)
+    harness.setStatusOutput('')
     harness.headChange()
     await vi.advanceTimersByTimeAsync(100)
     await flushBackground()

@@ -40,10 +40,17 @@ export interface PullRequest {
   checks: CheckSummary
 }
 
+export interface LocalChangesSummary {
+  changed: number
+  untracked: number
+  conflicts: number
+}
+
 interface PresentationState {
   sessionName?: string
   gitContext?: GitContext
   pullRequest?: PullRequest
+  localChanges?: LocalChangesSummary
 }
 
 interface HeadWatcher {
@@ -99,6 +106,69 @@ export function parseGitContext(output: string): GitContext | undefined {
     // Worktree managers commonly use <repo>/<worktree>/<repo>. The middle
     // directory carries the useful workspace identity in that layout.
     worktreeName: nestedWorktree ? basename(dirname(root)) : basename(root)
+  }
+}
+
+export function parseLocalChanges(output: string): LocalChangesSummary {
+  const changedPaths = new Set<string>()
+  const untrackedPaths = new Set<string>()
+  const conflictPaths = new Set<string>()
+  const records = output.split('\0')
+
+  function pathAfterFields(
+    record: string,
+    metadataFieldCount: number
+  ): string | undefined {
+    let start = 2
+    for (let index = 0; index < metadataFieldCount; index += 1) {
+      const separator = record.indexOf(' ', start)
+      if (separator < 0) return undefined
+      start = separator + 1
+    }
+    return record.slice(start) || undefined
+  }
+
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]
+    if (!record) continue
+
+    if (record.startsWith('1 ')) {
+      const path = pathAfterFields(record, 7)
+      if (path) changedPaths.add(path)
+      continue
+    }
+
+    if (record.startsWith('2 ')) {
+      const path = pathAfterFields(record, 8)
+      if (path) changedPaths.add(path)
+      // Rename/copy records carry the original path as a second NUL field.
+      // Always consume it, even when the metadata record was malformed.
+      index += 1
+      continue
+    }
+
+    if (record.startsWith('u ')) {
+      const path = pathAfterFields(record, 9)
+      if (path) {
+        changedPaths.add(path)
+        conflictPaths.add(path)
+      }
+      continue
+    }
+
+    if (record.startsWith('? ')) {
+      const path = record.slice(2)
+      if (path) {
+        changedPaths.add(path)
+        untrackedPaths.add(path)
+      }
+    }
+  }
+
+  return {
+    changed: changedPaths.size,
+    untracked: untrackedPaths.size,
+    conflicts: conflictPaths.size
   }
 }
 
@@ -260,6 +330,14 @@ function checkDisplay(checks: CheckSummary): {
   }
 }
 
+function countLabel(
+  count: number,
+  singular: string,
+  plural = `${singular}s`
+): string {
+  return `${count} ${count === 1 ? singular : plural}`
+}
+
 export function createWorkContext(
   options: WorkContextOptions = {}
 ): ExtensionFactory {
@@ -293,16 +371,17 @@ export function createWorkContext(
       )
     }
 
-    // This is the package's only terminal-title presenter. The PR widget below
+    // This is the package's only terminal-title presenter. The widget below
     // is deliberately independent and never calls setTitle().
     function presentTitle(ctx: ExtensionContext) {
       const title = composeTitle(state)
       if (title) ctx.ui.setTitle(title)
     }
 
-    function presentPullRequestWidget(ctx: ExtensionContext) {
+    function presentWidget(ctx: ExtensionContext) {
       const pullRequest = state.pullRequest
-      if (!pullRequest) {
+      const localChanges = state.localChanges
+      if (!pullRequest && !localChanges?.changed) {
         ctx.ui.setWidget(WORK_CONTEXT_RESOURCE, undefined)
         return
       }
@@ -311,21 +390,84 @@ export function createWorkContext(
         WORK_CONTEXT_RESOURCE,
         (_tui, theme) => ({
           render(width: number) {
-            const prColor =
-              pullRequest.state === 'OPEN'
-                ? pullRequest.isDraft
-                  ? 'warning'
-                  : 'success'
-                : pullRequest.state === 'MERGED'
-                  ? 'accent'
-                  : 'error'
-            const check = checkDisplay(pullRequest.checks)
-            const link = hyperlink(
-              theme.fg('mdLink', `#${pullRequest.number} ↗`),
-              pullRequest.url
-            )
-            const line = `${theme.fg('dim', 'PR')} ${theme.fg(prColor, '●')} ${link}   ${theme.fg('dim', 'CI')} ${theme.fg(check.color, check.text)}`
-            const truncated = truncateToWidth(line, Math.max(0, width), '')
+            const localVariants: string[] = []
+            if (localChanges?.changed) {
+              const changed = theme.fg(
+                'warning',
+                `${localChanges.changed === 1 ? 'Change' : 'Changes'} ${localChanges.changed}`
+              )
+              const untracked = localChanges.untracked
+                ? ` ${theme.fg('dim', '·')} ${theme.fg(
+                    'warning',
+                    countLabel(localChanges.untracked, 'untracked', 'untracked')
+                  )}`
+                : ''
+
+              if (localChanges.conflicts) {
+                const conflicts = theme.fg(
+                  'error',
+                  countLabel(localChanges.conflicts, 'conflict')
+                )
+                localVariants.push(
+                  `${conflicts} ${theme.fg('dim', '·')} ${changed}${untracked}`,
+                  `${conflicts} ${theme.fg('dim', '·')} ${changed}`,
+                  conflicts
+                )
+              } else {
+                localVariants.push(`${changed}${untracked}`, changed)
+              }
+            }
+
+            let remote: string | undefined
+            let remoteCompact: string | undefined
+            if (pullRequest) {
+              const prColor =
+                pullRequest.state === 'OPEN'
+                  ? pullRequest.isDraft
+                    ? 'warning'
+                    : 'success'
+                  : pullRequest.state === 'MERGED'
+                    ? 'accent'
+                    : 'error'
+              const check = checkDisplay(pullRequest.checks)
+              const link = hyperlink(
+                theme.fg('mdLink', `#${pullRequest.number} ↗`),
+                pullRequest.url
+              )
+              remote = `${theme.fg('dim', 'PR')} ${theme.fg(prColor, '●')} ${link}   ${theme.fg('dim', 'CI')} ${theme.fg(check.color, check.text)}`
+              remoteCompact = link
+            }
+
+            const candidates: string[] = []
+            if (remote && localVariants.length > 0) {
+              for (const local of localVariants) {
+                candidates.push(`${local}   ${remote}`)
+              }
+              if (localChanges?.conflicts && remoteCompact) {
+                candidates.push(
+                  `${localVariants.at(-1)}   ${remoteCompact}`,
+                  localVariants.at(-1) ?? remote
+                )
+              } else {
+                candidates.push(remote)
+                if (remoteCompact) candidates.push(remoteCompact)
+                candidates.push(localVariants.at(-1) ?? remote)
+              }
+            } else if (remote) {
+              candidates.push(remote)
+              if (remoteCompact) candidates.push(remoteCompact)
+            } else {
+              candidates.push(...localVariants)
+            }
+
+            const availableWidth = Math.max(0, width)
+            const line =
+              candidates.find(
+                (candidate) => visibleWidth(candidate) <= availableWidth
+              ) ??
+              candidates.at(-1) ??
+              ''
+            const truncated = truncateToWidth(line, availableWidth, '')
             // truncateToWidth may remove hyperlink()'s zero-width OSC 8
             // terminator. Always close link state explicitly before Pi renders
             // the next terminal content.
@@ -343,7 +485,7 @@ export function createWorkContext(
     function present(ctx: ExtensionContext) {
       if (disposed || ctx.mode !== 'tui') return
       presentTitle(ctx)
-      presentPullRequestWidget(ctx)
+      presentWidget(ctx)
     }
 
     function stopWatchingGitHead() {
@@ -375,9 +517,13 @@ export function createWorkContext(
                 return
               }
 
-              // A checkout invalidates branch-bound GitHub data immediately;
-              // retain the stable session/worktree context while refreshing.
-              state = { ...state, pullRequest: undefined }
+              // A checkout can replace both branch-bound GitHub data and the
+              // index/worktree summary. Retain only stable session context.
+              state = {
+                ...state,
+                pullRequest: undefined,
+                localChanges: undefined
+              }
               present(ctx)
               requestRefresh(ctx)
             }, HEAD_CHANGE_DEBOUNCE_MS)
@@ -437,6 +583,27 @@ export function createWorkContext(
       }
     }
 
+    async function findLocalChanges(
+      root: string
+    ): Promise<LocalChangesSummary | undefined> {
+      try {
+        const result = await pi.exec(
+          'git',
+          [
+            '--no-optional-locks',
+            'status',
+            '--porcelain=v2',
+            '-z',
+            '--untracked-files=all'
+          ],
+          { cwd: root, timeout: commandTimeoutMs }
+        )
+        return result.code === 0 ? parseLocalChanges(result.stdout) : undefined
+      } catch {
+        return undefined
+      }
+    }
+
     async function refresh(
       ctx: ExtensionContext,
       expectedGeneration: number,
@@ -450,7 +617,8 @@ export function createWorkContext(
         state = {
           sessionName: state.sessionName,
           gitContext: undefined,
-          pullRequest: undefined
+          pullRequest: undefined,
+          localChanges: undefined
         }
         present(ctx)
         return
@@ -460,16 +628,24 @@ export function createWorkContext(
       state = {
         ...state,
         gitContext,
-        pullRequest: changedRoot ? undefined : state.pullRequest
+        pullRequest: changedRoot ? undefined : state.pullRequest,
+        localChanges: changedRoot ? undefined : state.localChanges
       }
       watchGitHead(ctx, gitContext.gitDir)
       present(ctx)
 
-      const pullRequest = await findPullRequest(gitContext.root)
-      if (!isCurrent(expectedGeneration, expectedBranchRevision)) return
-
-      state = { ...state, gitContext, pullRequest }
-      present(ctx)
+      await Promise.all([
+        findLocalChanges(gitContext.root).then((localChanges) => {
+          if (!isCurrent(expectedGeneration, expectedBranchRevision)) return
+          state = { ...state, gitContext, localChanges }
+          present(ctx)
+        }),
+        findPullRequest(gitContext.root).then((pullRequest) => {
+          if (!isCurrent(expectedGeneration, expectedBranchRevision)) return
+          state = { ...state, gitContext, pullRequest }
+          present(ctx)
+        })
+      ])
     }
 
     function requestRefresh(ctx: ExtensionContext) {
