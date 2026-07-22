@@ -2,6 +2,7 @@
   "packages": [
     "../packages/changelog",
     "../packages/github-issues",
-    "../packages/terminal-bell"
+    "../packages/terminal-bell",
+    "../packages/work-context"
   ]
 }

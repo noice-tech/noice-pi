@@ -69,6 +69,19 @@ const packageSpecifications = {
     },
     exactArchive: true,
     dogfoodLocally: true
+  },
+  '@noice-tech/pi-work-context': {
+    required: [
+      'package/package.json',
+      'package/README.md',
+      'package/LICENSE',
+      'package/extensions/work-context/index.ts'
+    ],
+    piResources: {
+      extensions: ['./extensions/work-context/index.ts']
+    },
+    exactArchive: true,
+    dogfoodLocally: true
   }
 }
 

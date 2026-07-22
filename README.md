@@ -9,6 +9,7 @@ Public MIT-licensed [Pi](https://github.com/earendil-works/pi) packages from Noi
 | [`@noice-tech/pi-changelog`](packages/changelog)         | Commit, pull request, changelog preview, and release-notes workflows for Pi. |
 | [`@noice-tech/pi-github-issues`](packages/github-issues) | Start focused planning turns from GitHub issues.                             |
 | [`@noice-tech/pi-terminal-bell`](packages/terminal-bell) | Terminal bell notifications when Pi is ready.                                |
+| [`@noice-tech/pi-work-context`](packages/work-context)   | Session, Git worktree, pull request, and CI context in the terminal.         |
 
 Install the package you want from npm in the repository where you want to use it:
 
@@ -16,6 +17,7 @@ Install the package you want from npm in the repository where you want to use it
 pi install npm:@noice-tech/pi-changelog
 pi install npm:@noice-tech/pi-github-issues
 pi install npm:@noice-tech/pi-terminal-bell
+pi install npm:@noice-tech/pi-work-context
 ```
 
 See each package README for its commands, prerequisites, permissions, and behavior.
