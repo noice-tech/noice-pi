@@ -1,6 +1,6 @@
 # @noice-tech/pi-github-issues
 
-A focused [Pi](https://github.com/earendil-works/pi) extension for starting an ordinary agent turn to plan a GitHub issue.
+Pick a GitHub issue and turn it into a named Pi planning session in one command.
 
 ## Install
 
@@ -8,36 +8,24 @@ A focused [Pi](https://github.com/earendil-works/pi) extension for starting an o
 pi install npm:@noice-tech/pi-github-issues
 ```
 
-Commit the resulting `.pi/settings.json` change when collaborators should use the package too.
+## Commands
 
-## Prerequisites and trust
+| Command         | What it does                                                                    |
+| --------------- | ------------------------------------------------------------------------------- |
+| `/plan-issue`   | Opens a searchable TUI picker, showing issues assigned to you by default.       |
+| `/plan-issue 6` | Opens issue `6` directly without the picker. Use a positive number without `#`. |
 
-The extension requires:
-
-- [GitHub CLI](https://cli.github.com/) (`gh`)
-- an authenticated GitHub CLI session (`gh auth login`)
-- a GitHub repository checkout
-
-Pi extensions run with Pi's full system permissions. Only install packages you trust. This extension invokes `gh` to resolve the current repository and read issue metadata.
-
-## Command
-
-```text
-/plan-issue
-/plan-issue 6
-```
-
-With no argument, `/plan-issue` loads up to 1,000 open issues into a searchable TUI picker. The default **Assigned to me** scope uses the authenticated GitHub CLI user (`--assignee @me`) as a task queue. Press Tab to switch to **All open issues**, and type to filter by issue number or title.
-
-Passing a positive issue number bypasses the picker and resolves that issue directly through `gh`.
+The picker loads up to 1,000 open issues. Type to search by number or title, press Tab for all open issues, Enter to select, or Escape to cancel.
 
 After selection, the extension:
 
-1. names the Pi session `#<number> — <issue title>`; and
-2. starts a normal agent turn with `Let’s plan solving issue #<number> from GitHub.`
+1. names the session `#<number> — <issue title>`; and
+2. starts a turn with `Let’s plan solving issue #<number> from GitHub.`
 
-The extension does not add the issue body or other fetched details to model context, change the active tools, or enable a special planning mode. The agent can use `gh` itself to inspect the issue. Cancelling the picker leaves the session name and conversation unchanged.
+It does not inject the issue body, change tools, or enable a special planning mode. The agent can inspect the issue with `gh` as needed.
 
-## License
+## Requirements
 
-[MIT](./LICENSE)
+- [GitHub CLI](https://cli.github.com/) installed and authenticated with `gh auth login`
+- a GitHub repository checkout
+- TUI mode when `/plan-issue` has no number

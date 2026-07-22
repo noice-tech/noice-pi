@@ -1,47 +1,31 @@
 # 🔔 @noice-tech/pi-terminal-bell
 
-A tiny [Pi](https://github.com/earendil-works/pi) extension that rings your terminal when Pi is ready.
+Switch away from long Pi runs—your terminal alerts you when the agent settles.
 
 ## Install
 
-```sh
+```bash
 pi install npm:@noice-tech/pi-terminal-bell
 ```
 
-## How it works
+## Usage
 
-Pi emits one standard BEL character after it fully settles. Short runs under 10 seconds are ignored, and non-interactive output is never touched.
+There are no slash commands. The extension writes one standard BEL character after an interactive Pi run lasting at least 10 seconds.
 
-Change the minimum duration in seconds—or use `0` to ring every time:
+It only runs in TUI mode with TTY output. Your terminal decides whether BEL produces sound, a visual indicator, or an attention request.
 
-```sh
+Set a different minimum duration in seconds, or use `0` for every eligible run:
+
+```bash
 PI_TERMINAL_BELL_MIN_DURATION=30 pi
 ```
 
-## Ghostty 👻
+## Terminal setup
 
-Choose how Ghostty presents the bell:
+Test the terminal's BEL handling with:
 
-```ini
-bell-features = attention,title,border
-```
-
-Add `system` if you also want the system alert. Test your setup with:
-
-```sh
+```bash
 printf '\a'
 ```
 
-See Ghostty’s [BEL](https://ghostty.org/docs/vt/control/bel) and [`bell-features`](https://ghostty.org/docs/config/reference#bell-features) docs.
-
-## Why BEL?
-
-One byte. No runtime dependencies. Works through interactive SSH and terminal multiplexers. Your terminal keeps control of sound and accessibility, so BEL may be audible, visual-only, suppressed, or require multiplexer configuration.
-
-## Provenance
-
-This package migrated from [`samohovets/pi-terminal-bell`](https://github.com/samohovets/pi-terminal-bell) at source snapshot [`63e5b6d`](https://github.com/samohovets/pi-terminal-bell/commit/63e5b6d68c9689f5609af15620bbbd7f7708e4db). The source repository remains the history and provenance record.
-
-## License
-
-[MIT](./LICENSE)
+For Ghostty, configure `bell-features = attention,title,border`; add `system` for a system alert. See the [Ghostty bell documentation](https://ghostty.org/docs/vt/control/bel).
