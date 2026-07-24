@@ -1,19 +1,29 @@
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-  ExtensionFactory
+import {
+  getAgentDir,
+  getSettingsListTheme,
+  type ExtensionAPI,
+  type ExtensionContext,
+  type ExtensionFactory
 } from '@earendil-works/pi-coding-agent'
 import {
+  Container,
   hyperlink,
+  type SettingItem,
+  SettingsList,
+  Text,
   truncateToWidth,
   visibleWidth
 } from '@earendil-works/pi-tui'
+import { randomUUID } from 'node:crypto'
 import { watch } from 'node:fs'
-import { basename, dirname } from 'node:path'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 
 export const WORK_CONTEXT_RESOURCE = 'work-context'
+export const WORK_CONTEXT_CONFIG_FILENAME = 'work-context.json'
 export const DEFAULT_POLL_INTERVAL_MS = 60_000
 export const DEFAULT_COMMAND_TIMEOUT_MS = 5_000
+export const BELL = '\x07'
 
 const HEAD_CHANGE_DEBOUNCE_MS = 100
 const OSC_8_CLOSE = '\u001b]8;;\u001b\\'
@@ -57,14 +67,91 @@ interface HeadWatcher {
   close(): void
 }
 
+interface CiObservation {
+  root: string
+  pullRequestNumber: number
+  passed: boolean
+}
+
+export interface WorkContextSettings {
+  ciPassBell: boolean
+}
+
+export interface WorkContextSettingsStore {
+  load(): Promise<WorkContextSettings>
+  save(settings: WorkContextSettings): Promise<void>
+}
+
+export interface WorkContextOutput {
+  readonly isTTY?: boolean
+  write(chunk: string): unknown
+}
+
 export interface WorkContextOptions {
   commandTimeoutMs?: number
   pollIntervalMs?: number
+  output?: WorkContextOutput
+  settingsStore?: WorkContextSettingsStore
   watchGitHead?: (
     gitDir: string,
     onHeadChange: () => void,
     onError: () => void
   ) => HeadWatcher
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+async function readSettingsFile(
+  path: string
+): Promise<Record<string, unknown>> {
+  let raw: string
+  try {
+    raw = await readFile(path, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
+    throw error
+  }
+
+  const value: unknown = JSON.parse(raw)
+  if (!isRecord(value))
+    throw new Error('Work-context settings must be an object')
+  return value
+}
+
+export function createWorkContextSettingsStore(
+  path = join(getAgentDir(), WORK_CONTEXT_CONFIG_FILENAME)
+): WorkContextSettingsStore {
+  return {
+    async load() {
+      try {
+        const settings = await readSettingsFile(path)
+        return { ciPassBell: settings.ciPassBell === true }
+      } catch {
+        return { ciPassBell: false }
+      }
+    },
+    async save(settings) {
+      const current = await readSettingsFile(path)
+      const next = { ...current, ciPassBell: settings.ciPassBell }
+      const directory = dirname(path)
+      const temporaryPath = join(
+        directory,
+        `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`
+      )
+
+      await mkdir(directory, { recursive: true })
+      try {
+        await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, {
+          mode: 0o600
+        })
+        await rename(temporaryPath, path)
+      } finally {
+        await rm(temporaryPath, { force: true }).catch(() => {})
+      }
+    }
+  }
 }
 
 function cleanSingleLine(value: string | undefined): string | undefined {
@@ -344,6 +431,9 @@ export function createWorkContext(
   const commandTimeoutMs =
     options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
+  const output = options.output ?? process.stdout
+  const settingsStore =
+    options.settingsStore ?? createWorkContextSettingsStore()
   const createHeadWatcher = options.watchGitHead ?? defaultWatchGitHead
 
   return (pi: ExtensionAPI) => {
@@ -352,8 +442,11 @@ export function createWorkContext(
     let disposed = true
     let state: PresentationState = {}
     let activeContext: ExtensionContext | undefined
+    let ciObservation: CiObservation | undefined
+    let ciPassBell = false
     let refreshRunning = false
     let refreshQueued = false
+    let settingsWrite = Promise.resolve()
     let pollTimer: ReturnType<typeof setInterval> | undefined
     let headWatcher: HeadWatcher | undefined
     let watchedGitDir: string | undefined
@@ -488,6 +581,43 @@ export function createWorkContext(
       presentWidget(ctx)
     }
 
+    function observeCi(
+      ctx: ExtensionContext,
+      root: string,
+      pullRequest: PullRequest
+    ) {
+      const passed =
+        pullRequest.checks.total > 0 &&
+        pullRequest.checks.failed === 0 &&
+        pullRequest.checks.pending === 0
+      const previous = ciObservation
+      const samePullRequest =
+        previous?.root === root &&
+        previous.pullRequestNumber === pullRequest.number
+      const shouldRing = samePullRequest && !previous.passed && passed
+
+      ciObservation = {
+        root,
+        pullRequestNumber: pullRequest.number,
+        passed
+      }
+
+      if (
+        !shouldRing ||
+        !ciPassBell ||
+        ctx.mode !== 'tui' ||
+        output.isTTY !== true
+      ) {
+        return
+      }
+
+      try {
+        output.write(BELL)
+      } catch {
+        // Notification failures must never interrupt CI refreshes.
+      }
+    }
+
     function stopWatchingGitHead() {
       headWatcher?.close()
       headWatcher = undefined
@@ -507,9 +637,11 @@ export function createWorkContext(
           gitDir,
           () => {
             if (!isCurrent(watcherGeneration) || headWatcher !== watcher) return
-            // Invalidate a branch-bound lookup immediately, before the
-            // debounce expires, so its old PR cannot win this race.
+            // Invalidate branch-bound lookups and notification state
+            // immediately, before the debounce expires, so stale results
+            // cannot win this race or ring for the new branch.
             branchRevision += 1
+            ciObservation = undefined
             if (headChangeTimer) clearTimeout(headChangeTimer)
             headChangeTimer = setTimeout(() => {
               headChangeTimer = undefined
@@ -625,6 +757,9 @@ export function createWorkContext(
       }
 
       const changedRoot = state.gitContext?.root !== gitContext.root
+      if (ciObservation && ciObservation.root !== gitContext.root) {
+        ciObservation = undefined
+      }
       state = {
         ...state,
         gitContext,
@@ -642,6 +777,7 @@ export function createWorkContext(
         }),
         findPullRequest(gitContext.root).then((pullRequest) => {
           if (!isCurrent(expectedGeneration, expectedBranchRevision)) return
+          if (pullRequest) observeCi(ctx, gitContext.root, pullRequest)
           state = { ...state, gitContext, pullRequest }
           present(ctx)
         })
@@ -678,14 +814,93 @@ export function createWorkContext(
       stopWatchingGitHead()
     }
 
-    pi.on('session_start', (_event, ctx) => {
+    function saveCiPassBell(ctx: ExtensionContext, enabled: boolean) {
+      settingsWrite = settingsWrite
+        .then(() => settingsStore.save({ ciPassBell: enabled }))
+        .catch(() => {
+          ctx.ui.notify(
+            `CI pass bell is ${enabled ? 'on' : 'off'} for this session, but the setting could not be saved.`,
+            'error'
+          )
+        })
+    }
+
+    pi.registerCommand('work-context', {
+      description: 'Configure work-context',
+      handler: async (_args, ctx) => {
+        if (ctx.mode !== 'tui') {
+          ctx.ui.notify('/work-context requires TUI mode', 'error')
+          return
+        }
+
+        await ctx.ui.custom((tui, theme, _keybindings, done) => {
+          const items: SettingItem[] = [
+            {
+              id: 'ci-pass-bell',
+              label: 'CI pass bell',
+              description:
+                'Send a terminal bell when the current PR transitions to fully passed CI.',
+              currentValue: ciPassBell ? 'on' : 'off',
+              values: ['off', 'on']
+            }
+          ]
+          const container = new Container()
+          container.addChild(
+            new Text(
+              theme.fg('accent', theme.bold('Work Context Settings')),
+              1,
+              1
+            )
+          )
+          const settingsList = new SettingsList(
+            items,
+            3,
+            getSettingsListTheme(),
+            (id, newValue) => {
+              if (id !== 'ci-pass-bell') return
+              ciPassBell = newValue === 'on'
+              saveCiPassBell(ctx, ciPassBell)
+            },
+            () => done(undefined)
+          )
+          container.addChild(settingsList)
+
+          return {
+            render(width: number) {
+              return container.render(width)
+            },
+            invalidate() {
+              container.invalidate()
+            },
+            handleInput(data: string) {
+              settingsList.handleInput(data)
+              tui.requestRender()
+            }
+          }
+        })
+      }
+    })
+
+    pi.on('session_start', async (_event, ctx) => {
       stopSessionResources()
       disposed = false
       generation += 1
       branchRevision += 1
+      const expectedGeneration = generation
       activeContext = ctx
+      ciObservation = undefined
+      ciPassBell = false
       refreshQueued = false
       state = { sessionName: cleanSingleLine(pi.getSessionName()) }
+
+      let loadedCiPassBell = false
+      try {
+        loadedCiPassBell = (await settingsStore.load()).ciPassBell
+      } catch {
+        // Missing, unreadable, or malformed settings fail closed.
+      }
+      if (!isCurrent(expectedGeneration)) return
+      ciPassBell = loadedCiPassBell
 
       if (ctx.mode !== 'tui') return
       present(ctx)
@@ -707,15 +922,17 @@ export function createWorkContext(
       requestRefresh(ctx)
     })
 
-    pi.on('session_shutdown', (_event, ctx) => {
+    pi.on('session_shutdown', async (_event, ctx) => {
       disposed = true
       generation += 1
       refreshQueued = false
       activeContext = undefined
+      ciObservation = undefined
       stopSessionResources()
       if (ctx.mode === 'tui') {
         ctx.ui.setWidget(WORK_CONTEXT_RESOURCE, undefined)
       }
+      await settingsWrite
     })
   }
 }
