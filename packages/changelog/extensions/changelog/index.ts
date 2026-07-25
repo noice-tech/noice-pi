@@ -1,4 +1,3 @@
-import { completeSimple } from '@earendil-works/pi-ai/compat'
 import type {
   ExtensionAPI,
   ExtensionCommandContext
@@ -32,6 +31,8 @@ const CHANGE_TYPE_OPTIONS: Array<{ type: ChangeType; label: string }> = [
 ]
 
 const MESSAGE_TYPE = 'noice-changelog-commit-result'
+const PROSE_PROMPT_MESSAGE_TYPE = 'noice-changelog-commit-prose-prompt'
+const PROSE_CHECKPOINT_TYPE = 'noice-changelog-commit-prose-checkpoint'
 const COMMIT_WIDGET_KEY = 'noice-changelog-commit-worker'
 type CommitDisplayStatus = 'ok' | 'cancelled' | 'failed'
 
@@ -43,13 +44,32 @@ interface CommitResultDetails {
 
 let commitCommandPending = false
 let commitWorkflowRunning = false
+let commitProseRunning = false
+let proseAgentSettledWaiter: (() => void) | undefined
 
 export default function noiceChangelogExtension(pi: ExtensionAPI) {
+  pi.on('agent_settled', () => {
+    proseAgentSettledWaiter?.()
+    proseAgentSettledWaiter = undefined
+  })
+
+  pi.on('tool_call', () => {
+    if (!commitProseRunning) return
+    return {
+      block: true,
+      reason:
+        '/commit is requesting prose only; repository tools and mutations are owned by the extension'
+    }
+  })
+
   pi.on('context', (event) => ({
-    messages: event.messages.filter(
-      (message) =>
-        (message as { customType?: string }).customType !== MESSAGE_TYPE
-    )
+    messages: event.messages.filter((message) => {
+      const customType = (message as { customType?: string }).customType
+      if (customType === MESSAGE_TYPE) return false
+      if (customType === PROSE_PROMPT_MESSAGE_TYPE && !commitProseRunning)
+        return false
+      return true
+    })
   }))
 
   pi.registerMessageRenderer<CommitResultDetails>(
@@ -122,7 +142,13 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
           parsed.changeType,
           parsed.context,
           {
-            generateProse: (input) => generateProse(pi, ctx, input),
+            generateProse: (input) =>
+              generateProse(
+                pi,
+                ctx,
+                input,
+                createConversationCheckpoint(pi, ctx)
+              ),
             onProgress: progress.update
           }
         )
@@ -171,11 +197,10 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
 export async function generateProse(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
-  input: ProseInput
+  input: ProseInput,
+  sourceLeafId: string
 ) {
   if (!ctx.model) throw new Error('/commit requires an active model')
-  const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model)
-  if (!auth.ok) throw new Error(auth.error)
 
   const extensionDir = dirname(fileURLToPath(import.meta.url))
   const [template, rules] = await Promise.all([
@@ -185,41 +210,140 @@ export async function generateProse(
   const prompt = template
     .replace('{{rules}}', rules)
     .replace('{{input}}', JSON.stringify(input, null, 2))
-  const thinkingLevel = pi.getThinkingLevel()
-  const response = await completeSimple(
-    ctx.model,
-    {
-      messages: [
-        {
-          role: 'user',
-          content: [{ type: 'text', text: prompt }],
-          timestamp: Date.now()
-        }
-      ]
-    },
-    {
-      apiKey: auth.apiKey,
-      headers: auth.headers,
-      env: auth.env,
-      reasoning: thinkingLevel === 'off' ? undefined : thinkingLevel
-    }
-  )
-  if (response.stopReason !== 'stop') {
-    const detail =
-      response.stopReason === 'error' && response.errorMessage
-        ? `: ${response.errorMessage}`
+
+  commitProseRunning = true
+  try {
+    const agentSettled = waitForProseAgentSettled()
+    pi.sendMessage(
+      {
+        customType: PROSE_PROMPT_MESSAGE_TYPE,
+        content: prompt,
+        display: false,
+        details: { purpose: 'commit-prose' }
+      },
+      { triggerTurn: true, deliverAs: 'followUp' }
+    )
+    await agentSettled
+
+    // Read the durable hidden branch after the complete run settles. Individual
+    // agent_end payloads contain only one low-level retry/continuation and can
+    // omit either the original prompt or the final successful response.
+    const branch = ctx.sessionManager.getBranch() as ProseBranchEntry[]
+    const promptIndex = findLastProsePromptIndex(branch)
+    if (promptIndex < 0)
+      throw new Error('The commit prose prompt was missing from the model turn')
+    const assistant = findLastBranchAssistant(branch, promptIndex)
+    if (!assistant) throw new Error('The model returned no commit prose')
+    if (assistant.stopReason !== 'stop') {
+      const detail = assistant.errorMessage
+        ? `: ${assistant.errorMessage.trim()}`
         : ''
+      throw new Error(
+        `The model did not finish generating commit prose (stopReason: ${assistant.stopReason ?? 'unknown'})${detail}`
+      )
+    }
+    const text = extractText(assistant.content).trim()
+    if (!text) throw new Error('The model returned no commit prose')
+    try {
+      return JSON.parse(text) as unknown
+    } catch {
+      throw new Error('The model response was not strict JSON')
+    }
+  } finally {
+    proseAgentSettledWaiter = undefined
+    try {
+      await restoreConversationLeaf(ctx, sourceLeafId)
+    } finally {
+      // Never leave global tool blocking enabled when waiting or navigation
+      // fails. The workflow will fail before any Git mutation if restoration
+      // itself cannot be proven.
+      commitProseRunning = false
+    }
+  }
+}
+
+interface ProseBranchEntry {
+  id: string
+  type: string
+  customType?: string
+  message?: {
+    role?: string
+    content?: unknown
+    stopReason?: string
+    errorMessage?: string
+  }
+}
+
+function waitForProseAgentSettled() {
+  return new Promise<void>((resolve) => {
+    proseAgentSettledWaiter = resolve
+  })
+}
+
+export function createConversationCheckpoint(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext
+) {
+  // Plain custom entries do not participate in model context, so this preserves
+  // the provider's exact cached prefix while giving navigateTree a target that
+  // restores every preceding durable entry. User and custom_message entries
+  // are unsafe targets because Pi intentionally navigates to their parent.
+  pi.appendEntry(PROSE_CHECKPOINT_TYPE)
+  const checkpoint = ctx.sessionManager.getLeafId()
+  if (!checkpoint) {
+    throw new Error('Could not checkpoint the conversation before /commit')
+  }
+  const entry = ctx.sessionManager.getEntry(checkpoint) as
+    | { type?: string; customType?: string }
+    | undefined
+  if (entry?.type !== 'custom' || entry.customType !== PROSE_CHECKPOINT_TYPE) {
+    throw new Error('The /commit conversation checkpoint was not persisted')
+  }
+  return checkpoint
+}
+
+async function restoreConversationLeaf(
+  ctx: ExtensionCommandContext,
+  sourceLeafId: string
+) {
+  if (!ctx.isIdle()) await ctx.waitForIdle()
+  if (ctx.sessionManager.getLeafId() === sourceLeafId) return
+  const navigation = await ctx.navigateTree(sourceLeafId, { summarize: false })
+  if (navigation.cancelled) {
     throw new Error(
-      `The model did not finish generating commit prose (stopReason: ${response.stopReason})${detail}`
+      'Could not restore the conversation after generating commit prose'
     )
   }
-  const text = extractText(response.content).trim()
-  if (!text) throw new Error('The model returned no commit prose')
-  try {
-    return JSON.parse(text) as unknown
-  } catch {
-    throw new Error('The model response was not strict JSON')
+  if (ctx.sessionManager.getLeafId() !== sourceLeafId) {
+    throw new Error(
+      'Conversation restoration reached an unexpected session leaf; refusing to mutate Git'
+    )
   }
+}
+
+function findLastProsePromptIndex(entries: ProseBranchEntry[]) {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
+    if (
+      entry.type === 'custom_message' &&
+      entry.customType === PROSE_PROMPT_MESSAGE_TYPE
+    ) {
+      return index
+    }
+  }
+  return -1
+}
+
+function findLastBranchAssistant(
+  entries: ProseBranchEntry[],
+  afterIndex: number
+) {
+  for (let index = entries.length - 1; index > afterIndex; index -= 1) {
+    const entry = entries[index]
+    if (entry.type === 'message' && entry.message?.role === 'assistant')
+      return entry.message
+  }
+  return undefined
 }
 
 async function sendResult(

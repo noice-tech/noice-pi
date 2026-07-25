@@ -53,7 +53,7 @@ Other inputs use a filesystem-safe slug derived from the argument. The public fi
 
 ## Deterministic `/commit` workflow
 
-`/commit` waits for the active turn to finish, then the extension—not a coding-agent turn—inspects and mutates Git and GitHub. It stages and commits **all current changes**, pushes the branch, and creates or updates the matching PR. The active model and thinking level are used only for a direct, tool-free prose request; its typed JSON response is strictly validated before any commit is created.
+`/commit` waits for the active turn to finish, then the extension inspects and mutates Git and GitHub. It stages and commits **all current changes**, pushes the branch, and creates or updates the matching PR. Commit and PR wording comes from a hidden prose-only turn branched from the active conversation, preserving its context and provider prompt cache. The extension blocks tools during that turn, strictly validates its typed JSON response, and returns to the original conversation branch before creating any commit.
 
 An existing open PR keeps its base branch. For a new PR, base configuration is read in this order:
 

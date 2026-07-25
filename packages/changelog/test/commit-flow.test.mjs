@@ -2,11 +2,14 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
-import noiceChangelogExtension from '../extensions/changelog/index.ts'
+import noiceChangelogExtension, {
+  createConversationCheckpoint,
+  generateProse
+} from '../extensions/changelog/index.ts'
 
 const RESULT_MESSAGE_TYPE = 'noice-changelog-commit-result'
 
-test('direct prose generation uses the simple reasoning contract and strict completion', async () => {
+test('prose generation reuses the active conversation and keeps tools read-only', async () => {
   const source = await readFile(
     new URL('../extensions/changelog/index.ts', import.meta.url),
     'utf8'
@@ -15,9 +18,11 @@ test('direct prose generation uses the simple reasoning contract and strict comp
     new URL('../extensions/changelog/prose-prompt.md', import.meta.url),
     'utf8'
   )
-  assert.match(source, /completeSimple\(/)
-  assert.match(source, /reasoning:/)
-  assert.doesNotMatch(source, /temperature:/)
+  assert.doesNotMatch(source, /completeSimple\(/)
+  assert.match(source, /triggerTurn: true/)
+  assert.match(source, /deliverAs: 'followUp'/)
+  assert.match(source, /ctx\.navigateTree\(sourceLeafId/)
+  assert.match(source, /pi\.on\('tool_call'/)
   assert.match(source, /stopReason !== 'stop'/)
   assert.doesNotMatch(source, /running deterministically/i)
   assert.doesNotMatch(source, /if \(!auth\.apiKey\)/)
@@ -32,6 +37,151 @@ test('direct prose generation uses the simple reasoning contract and strict comp
   ]) {
     assert.ok(prompt.includes(`\`${key}\``))
   }
+})
+
+test('conversation checkpoint preserves navigation-safe state entries', () => {
+  let leaf = 'thinking-level-entry'
+  const entries = new Map([
+    [leaf, { type: 'thinking_level_change', thinkingLevel: 'high' }]
+  ])
+  const pi = {
+    appendEntry(customType) {
+      leaf = 'checkpoint-entry'
+      entries.set(leaf, { type: 'custom', customType })
+    }
+  }
+  const ctx = {
+    sessionManager: {
+      getLeafId: () => leaf,
+      getEntry: (id) => entries.get(id)
+    }
+  }
+
+  assert.equal(createConversationCheckpoint(pi, ctx), 'checkpoint-entry')
+  assert.equal(
+    entries.get('thinking-level-entry').thinkingLevel,
+    'high',
+    'checkpointing must retain preceding model and thinking state'
+  )
+})
+
+test('prose turn branches from and returns to the active conversation', async () => {
+  const handlers = new Map()
+  const sent = []
+  const navigated = []
+  let leaf = 'source-leaf'
+  let toolBlock
+  const branch = [
+    {
+      id: 'source-leaf',
+      type: 'message',
+      message: { role: 'assistant', stopReason: 'stop', content: [] }
+    }
+  ]
+  const pi = {
+    on(event, handler) {
+      handlers.set(event, handler)
+    },
+    registerMessageRenderer() {},
+    registerCommand() {},
+    sendMessage(message, options) {
+      sent.push({ message, options })
+      leaf = 'prose-leaf'
+      toolBlock = handlers.get('tool_call')?.({
+        toolName: 'bash',
+        input: { command: 'git status' }
+      })
+      branch.push(
+        {
+          id: 'prompt-leaf',
+          type: 'custom_message',
+          customType: message.customType
+        },
+        {
+          id: 'retry-error',
+          type: 'message',
+          message: {
+            role: 'assistant',
+            stopReason: 'error',
+            errorMessage: 'transient error',
+            content: []
+          }
+        },
+        {
+          id: 'prose-leaf',
+          type: 'message',
+          message: {
+            role: 'assistant',
+            stopReason: 'stop',
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  commitType: 'internal',
+                  commitMessage: 'internal: reuse conversation context',
+                  prType: 'internal',
+                  prHeadline: 'reuse conversation context',
+                  summary: ['Reuse the active conversation.'],
+                  publicSummary: 'None.',
+                  context: ['Preserves the provider prompt cache.']
+                })
+              }
+            ]
+          }
+        }
+      )
+      queueMicrotask(() => handlers.get('agent_settled')?.({}))
+    }
+  }
+  noiceChangelogExtension(pi)
+  const ctx = {
+    model: {},
+    isIdle: () => true,
+    waitForIdle: async () => {},
+    sessionManager: {
+      getLeafId: () => leaf,
+      getBranch: () => branch
+    },
+    async navigateTree(target) {
+      navigated.push(target)
+      leaf = target
+      return { cancelled: false }
+    }
+  }
+
+  const prose = await generateProse(
+    pi,
+    ctx,
+    {
+      selectedChangeType: 'internal',
+      userContext: 'reuse context',
+      status: ' M file.ts',
+      diff: 'diff',
+      untrackedMaterial: '',
+      commits: '',
+      existingPr: null,
+      baseBranch: 'main',
+      packageScope: 'changelog'
+    },
+    'source-leaf'
+  )
+
+  assert.equal(prose.commitMessage, 'internal: reuse conversation context')
+  assert.deepEqual(sent[0].options, {
+    triggerTurn: true,
+    deliverAs: 'followUp'
+  })
+  assert.equal(sent[0].message.display, false)
+  assert.equal(toolBlock.block, true)
+  assert.deepEqual(navigated, ['source-leaf'])
+  assert.equal(
+    handlers.get('tool_call')?.({
+      toolName: 'bash',
+      input: { command: 'git status' }
+    }),
+    undefined,
+    'tool blocking must be cleared after returning to the source leaf'
+  )
 })
 
 function result(stdout = '', code = 0, stderr = '') {
