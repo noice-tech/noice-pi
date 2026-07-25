@@ -46,7 +46,16 @@ export interface PullRequest {
   url: string
 }
 
+export interface ChangeCandidate {
+  id: string
+  status: string
+  paths: string[]
+  display: string
+}
+
 export interface CommitProse {
+  stageChangeIds: string[]
+  ignoreChangeIds: string[]
   commitType: ResolvedChangeType
   commitMessage: string
   prType: ResolvedChangeType
@@ -60,6 +69,7 @@ export interface CommitProse {
 export interface ProseInput {
   selectedChangeType: ChangeType
   userContext: string
+  changes: ChangeCandidate[]
   status: string
   diff: string
   untrackedMaterial: string
@@ -133,6 +143,8 @@ interface InspectedState {
   baseBranch: string
   aheadCount: number
   packageScope: string | null
+  committedFiles: string[]
+  changes: ChangeCandidate[]
   diff: string
   untrackedMaterial: string
   commits: string
@@ -174,6 +186,7 @@ export async function executeCommitWorkflow(
       await dependencies.generateProse({
         selectedChangeType,
         userContext,
+        changes: state.changes,
         status: state.displayStatus,
         diff: state.diff,
         untrackedMaterial: state.untrackedMaterial,
@@ -183,8 +196,25 @@ export async function executeCommitWorkflow(
         packageScope: state.packageScope
       }),
       selectedChangeType,
-      state.packageScope
+      state.packageScope,
+      state.changes
     )
+    const selectedChanges = selectChanges(state.changes, prose.stageChangeIds)
+    const ignoredChanges = selectChanges(state.changes, prose.ignoreChangeIds)
+    const selectedPaths = candidatePaths(selectedChanges)
+    const ignoredPaths = candidatePaths(ignoredChanges)
+    const packageScope = await detectPackageScope(ctx, [
+      ...state.committedFiles,
+      ...selectedPaths
+    ])
+    prose.prTitle = formatPullRequestTitle(
+      prose.prType,
+      prose.prHeadline,
+      packageScope
+    )
+    if (ignoredChanges.length) {
+      notes.push(formatIgnoredChangesNote(ignoredChanges))
+    }
 
     // The prose call is deliberately the only long-running operation between
     // inspection and mutation. Re-read every input that can affect the commit
@@ -194,7 +224,7 @@ export async function executeCommitWorkflow(
 
     if (
       state.branch === state.repository.defaultBranchRef.name &&
-      (state.rawStatus || state.aheadCount > 0)
+      (selectedChanges.length > 0 || state.aheadCount > 0)
     ) {
       dependencies.onProgress?.('Creating a feature branch')
       const newBranch = await createBranch(
@@ -203,61 +233,34 @@ export async function executeCommitWorkflow(
         prose.commitMessage
       )
       notes.push(`created branch ${newBranch}`)
-      state = { ...state, branch: newBranch, existingPr: null }
+      state = {
+        ...state,
+        branch: newBranch,
+        existingPr: null,
+        snapshot: { ...state.snapshot, branch: newBranch }
+      }
       latestPr = null
     }
 
-    if (state.rawStatus) {
-      dependencies.onProgress?.('Staging all changes')
-      await run(ctx, 'git', ['add', '-A'])
-      const stagedTree = await output(ctx, 'git', ['write-tree'])
-      if (stagedTree !== state.snapshot.prospectiveTree) {
-        throw new Error(
-          'Worktree changed before staging; refusing to commit unreviewed content. Rerun /commit'
-        )
-      }
-      dependencies.onProgress?.(`Committing: ${prose.commitMessage}`)
-      await run(ctx, 'git', ['commit', '-m', prose.commitMessage])
-      const [
-        committedSha,
-        committedParent,
-        committedTree,
-        committedSubject,
-        postCommitStatus
-      ] = await Promise.all([
-        output(ctx, 'git', ['rev-parse', 'HEAD']),
-        output(ctx, 'git', ['rev-parse', 'HEAD^']),
-        output(ctx, 'git', ['rev-parse', 'HEAD^{tree}']),
-        output(ctx, 'git', ['log', '-1', '--format=%s']),
-        rawOutput(ctx, 'git', ['status', '--porcelain=v1', '-z', '-uall'])
-      ])
-      const shortSha = await output(ctx, 'git', [
-        'rev-parse',
-        '--short',
-        committedSha
-      ])
-      createdCommit = `${shortSha} ${committedSubject}`
-      if (committedParent !== state.headSha) {
-        throw new Error(
-          'HEAD changed while creating the commit; refusing to push an uninspected commit'
-        )
-      }
-      if (committedTree !== state.snapshot.prospectiveTree) {
-        throw new Error(
-          'A commit hook changed the staged tree; refusing to push unreviewed content'
-        )
-      }
-      if (committedSubject !== prose.commitMessage) {
-        throw new Error(
-          'A commit hook changed the commit message; refusing to push unexpected metadata'
-        )
-      }
-      if (postCommitStatus) {
-        throw new Error(
-          'Worktree is not clean after commit; refusing to push partial state'
-        )
-      }
-      publishSha = committedSha
+    if (selectedChanges.length) {
+      dependencies.onProgress?.(
+        `Staging ${selectedChanges.length} selected ${selectedChanges.length === 1 ? 'change' : 'changes'}`
+      )
+      await commitSelectedChanges(
+        ctx,
+        state.headSha,
+        state.snapshot,
+        prose.commitMessage,
+        selectedPaths,
+        ignoredPaths,
+        (committed) => {
+          createdCommit = `${committed.shortSha} ${committed.subject}`
+          publishSha = committed.sha
+        }
+      )
+    } else if (state.rawStatus && state.aheadCount === 0 && !state.existingPr) {
+      dependencies.onProgress?.('No relevant changes selected')
+      return result('no_changes', null, null, notes)
     }
 
     dependencies.onProgress?.(`Pushing ${state.branch}`)
@@ -407,16 +410,27 @@ async function inspectState(ctx: WorkflowContext): Promise<InspectedState> {
     collectChangedFiles(ctx, baseBranch, untrackedPaths)
   ])
   const packageScope = await detectPackageScope(ctx, changedFiles)
+  const changes = parsePorcelainChanges(rawStatus)
+  const committedFiles = splitNul(
+    await rawOutput(ctx, 'git', [
+      'diff',
+      '--name-only',
+      '-z',
+      `origin/${baseBranch}...HEAD`
+    ])
+  )
 
   return {
     branch,
     rawStatus,
-    displayStatus: formatPorcelainStatus(rawStatus),
+    displayStatus: changes.map((change) => change.display).join('\n'),
     existingPr,
     repository,
     baseBranch,
     aheadCount,
     packageScope,
+    committedFiles,
+    changes,
     diff,
     untrackedMaterial: untracked.prose,
     commits,
@@ -497,6 +511,175 @@ async function assertNoUnmergedStatus(ctx: WorkflowContext) {
   if (unmerged) {
     throw new Error('Unmerged repository status is not supported by /commit')
   }
+}
+
+interface IgnoredSnapshot {
+  indexEntries: string
+  worktreeFingerprint: string
+}
+
+async function commitSelectedChanges(
+  ctx: WorkflowContext,
+  expectedParent: string,
+  expectedSnapshot: WorktreeSnapshot,
+  commitMessage: string,
+  selectedPaths: string[],
+  ignoredPaths: string[],
+  onCommitted: (commit: {
+    sha: string
+    shortSha: string
+    subject: string
+  }) => void
+) {
+  const directory = await mkdtemp(join(tmpdir(), 'noice-changelog-commit-'))
+  const indexFile = join(directory, 'index')
+  const ignoredSnapshot = await captureIgnoredSnapshot(ctx, ignoredPaths)
+  try {
+    await runWithAlternateIndex(ctx, indexFile, ['read-tree', 'HEAD'])
+    await runWithAlternateIndex(ctx, indexFile, [
+      '--literal-pathspecs',
+      'add',
+      '-A',
+      '--',
+      ...selectedPaths
+    ])
+    const selectedTree = (
+      await runWithAlternateIndex(ctx, indexFile, ['write-tree'])
+    ).stdout.trim()
+    // Close the race between the pre-mutation recheck and alternate-index
+    // staging. The alternate index itself does not affect this snapshot.
+    await assertSnapshotUnchanged(ctx, expectedSnapshot)
+
+    await runWithAlternateIndex(ctx, indexFile, ['commit', '-m', commitMessage])
+    const sha = await output(ctx, 'git', ['rev-parse', 'HEAD'])
+    const [parent, tree, completeMessage] = await Promise.all([
+      output(ctx, 'git', ['rev-parse', `${sha}^`]),
+      output(ctx, 'git', ['rev-parse', `${sha}^{tree}`]),
+      output(ctx, 'git', ['log', '-1', '--format=%B', sha])
+    ])
+    if (parent !== expectedParent) {
+      throw new Error(
+        'HEAD changed while creating the commit; refusing to push an uninspected commit'
+      )
+    }
+    if (tree !== selectedTree) {
+      throw new Error(
+        'A commit hook changed the staged tree; refusing to push unreviewed content'
+      )
+    }
+    if (completeMessage !== commitMessage) {
+      throw new Error(
+        'A commit hook changed the commit message; refusing to push unexpected metadata'
+      )
+    }
+    // The real index was never used for the commit. Move only selected entries
+    // to the new HEAD so ignored pre-staged entries retain their exact blobs.
+    await run(ctx, 'git', [
+      '--literal-pathspecs',
+      'reset',
+      '--quiet',
+      'HEAD',
+      '--',
+      ...selectedPaths
+    ])
+    const committed = {
+      sha,
+      shortSha: await output(ctx, 'git', ['rev-parse', '--short', sha]),
+      subject: commitMessage
+    }
+    onCommitted(committed)
+    await assertIgnoredSnapshotUnchanged(ctx, ignoredPaths, ignoredSnapshot)
+    const postCommitStatus = await rawOutput(ctx, 'git', [
+      'status',
+      '--porcelain=v1',
+      '-z',
+      '-uall'
+    ])
+    const allowedPaths = new Set(ignoredPaths)
+    const unexpected = candidatePaths(
+      parsePorcelainChanges(postCommitStatus)
+    ).filter((path) => !allowedPaths.has(path))
+    if (unexpected.length) {
+      throw new Error(
+        `Worktree changed outside the intentionally ignored selection after commit: ${unexpected.map(displayPath).join(', ')}`
+      )
+    }
+
+    return committed
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+}
+
+async function captureIgnoredSnapshot(
+  ctx: WorkflowContext,
+  paths: string[]
+): Promise<IgnoredSnapshot> {
+  if (!paths.length) return { indexEntries: '', worktreeFingerprint: '' }
+  const [indexEntries, worktreeFingerprint] = await Promise.all([
+    rawOutput(ctx, 'git', [
+      '--literal-pathspecs',
+      'ls-files',
+      '--stage',
+      '-z',
+      '--',
+      ...paths
+    ]),
+    fingerprintPaths(ctx.cwd, paths)
+  ])
+  return { indexEntries, worktreeFingerprint }
+}
+
+async function assertIgnoredSnapshotUnchanged(
+  ctx: WorkflowContext,
+  paths: string[],
+  expected: IgnoredSnapshot
+) {
+  const actual = await captureIgnoredSnapshot(ctx, paths)
+  if (
+    actual.indexEntries !== expected.indexEntries ||
+    actual.worktreeFingerprint !== expected.worktreeFingerprint
+  ) {
+    throw new Error(
+      'An intentionally ignored change was modified while creating the commit; refusing to push'
+    )
+  }
+}
+
+async function fingerprintPaths(root: string, paths: string[]) {
+  const fingerprints: string[] = []
+  for (const relativePath of [...new Set(paths)].sort()) {
+    const absolutePath = join(root, relativePath)
+    try {
+      const metadata = await lstat(absolutePath)
+      let kind = 'other'
+      let digest = ''
+      if (metadata.isSymbolicLink()) {
+        kind = 'symlink'
+        digest = createHash('sha256')
+          .update(await readlink(absolutePath))
+          .digest('hex')
+      } else if (metadata.isFile()) {
+        kind = 'file'
+        digest = (await hashAndReadPrefix(absolutePath, 0)).digest
+      } else if (metadata.isDirectory()) {
+        kind = 'directory'
+      }
+      fingerprints.push(
+        JSON.stringify([
+          relativePath,
+          kind,
+          metadata.mode,
+          metadata.size,
+          digest
+        ])
+      )
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      fingerprints.push(JSON.stringify([relativePath, 'missing']))
+    }
+  }
+  return fingerprints.join('\n')
 }
 
 async function computeProspectiveTree(ctx: WorkflowContext) {
@@ -740,10 +923,13 @@ function validatePullRequest(value: unknown): PullRequest {
 export function validateCommitProse(
   value: unknown,
   selectedType: ChangeType,
-  packageScope: string | null
+  packageScope: string | null,
+  changes: ChangeCandidate[] = []
 ): CommitProse {
   if (!isRecord(value)) throw new Error('Model response must be a JSON object')
   const expectedKeys = [
+    'stageChangeIds',
+    'ignoreChangeIds',
     'commitType',
     'commitMessage',
     'prType',
@@ -756,6 +942,35 @@ export function validateCommitProse(
   if (actualKeys.join(',') !== [...expectedKeys].sort().join(',')) {
     throw new Error(
       `Model response keys must be exactly: ${expectedKeys.join(', ')}`
+    )
+  }
+  const stageChangeIds = validateChangeIds(
+    value.stageChangeIds,
+    'stageChangeIds'
+  )
+  const ignoreChangeIds = validateChangeIds(
+    value.ignoreChangeIds,
+    'ignoreChangeIds'
+  )
+  const knownIds = new Set(changes.map((change) => change.id))
+  const selectedIds = new Set([...stageChangeIds, ...ignoreChangeIds])
+  if (
+    selectedIds.size !== stageChangeIds.length + ignoreChangeIds.length ||
+    [...selectedIds].some((id) => !knownIds.has(id)) ||
+    selectedIds.size !== knownIds.size
+  ) {
+    throw new Error(
+      'Model change selection must partition every supplied change ID exactly once'
+    )
+  }
+  const stagePaths = candidatePaths(selectChanges(changes, stageChangeIds))
+  const ignorePathSet = new Set(
+    candidatePaths(selectChanges(changes, ignoreChangeIds))
+  )
+  const overlappingPaths = stagePaths.filter((path) => ignorePathSet.has(path))
+  if (overlappingPaths.length) {
+    throw new Error(
+      `Model change selection split overlapping Git status entries (${overlappingPaths.map(displayPath).join(', ')}); entries sharing a path must be selected or ignored together`
     )
   }
   for (const key of ['commitType', 'prType'] as const) {
@@ -825,17 +1040,61 @@ export function validateCommitProse(
   if (prType !== 'internal' && value.publicSummary === 'None.')
     throw new Error('User-facing PRs require a public summary')
 
-  const scope = packageScope ? `(${packageScope})` : ''
   return {
+    stageChangeIds,
+    ignoreChangeIds,
     commitType,
     commitMessage: value.commitMessage,
     prType,
     prHeadline: value.prHeadline,
-    prTitle: `${prType}${scope}: ${value.prHeadline}`,
+    prTitle: formatPullRequestTitle(prType, value.prHeadline, packageScope),
     summary: value.summary,
     publicSummary: value.publicSummary,
     context: value.context
   }
+}
+
+function validateChangeIds(value: unknown, key: string) {
+  if (
+    !Array.isArray(value) ||
+    value.some((id) => typeof id !== 'string' || !id)
+  ) {
+    throw new Error(`Model response ${key} must be an array of change IDs`)
+  }
+  if (new Set(value).size !== value.length) {
+    throw new Error(`Model response ${key} must not contain duplicate IDs`)
+  }
+  return value as string[]
+}
+
+function formatPullRequestTitle(
+  type: ResolvedChangeType,
+  headline: string,
+  packageScope: string | null
+) {
+  const scope = packageScope ? `(${packageScope})` : ''
+  return `${type}${scope}: ${headline}`
+}
+
+function selectChanges(changes: ChangeCandidate[], ids: string[]) {
+  const selected = new Set(ids)
+  return changes.filter((change) => selected.has(change.id))
+}
+
+function candidatePaths(changes: ChangeCandidate[]) {
+  return [...new Set(changes.flatMap((change) => change.paths))]
+}
+
+function formatIgnoredChangesNote(changes: ChangeCandidate[]) {
+  const visible = changes
+    .slice(0, 8)
+    .map((change) =>
+      change.display.length > 120
+        ? `${change.display.slice(0, 119)}…`
+        : change.display
+    )
+  const omitted = changes.length - visible.length
+  return `left ${changes.length} unrelated ${changes.length === 1 ? 'change' : 'changes'} untouched: ${visible.join(', ')}${omitted ? `, … ${omitted} more` : ''}`
 }
 
 export function mergePullRequestBody(
@@ -902,27 +1161,36 @@ function splitNul(value: string) {
   return records
 }
 
-function formatPorcelainStatus(rawStatus: string) {
+export function parsePorcelainChanges(rawStatus: string) {
   const records = splitNul(rawStatus)
-  const lines: string[] = []
+  const changes: ChangeCandidate[] = []
   for (let index = 0; index < records.length; index += 1) {
     const record = records[index]
     if (record.length < 3) throw new Error('Invalid NUL-delimited Git status')
-    const code = record.slice(0, 2)
+    const status = record.slice(0, 2)
     const path = record.slice(3)
-    if (code.includes('R') || code.includes('C')) {
+    let paths = [path]
+    let display = `${status} ${displayPath(path)}`
+    if (status.includes('R') || status.includes('C')) {
       const original = records[index + 1]
       if (original === undefined)
         throw new Error('Invalid NUL-delimited Git rename status')
-      lines.push(`${record.slice(0, 3)}${original} -> ${path}`)
+      paths = status.includes('R') ? [original, path] : [path]
+      display = `${status} ${displayPath(original)} -> ${displayPath(path)}`
       index += 1
-    } else {
-      // Preserve the leading index/worktree status columns. In particular,
-      // ` M file` must never be collapsed to `M file` by generic trim logic.
-      lines.push(record)
     }
+    changes.push({
+      id: `change-${changes.length + 1}`,
+      status,
+      paths,
+      display
+    })
   }
-  return lines.join('\n')
+  return changes
+}
+
+function displayPath(path: string) {
+  return /[\x00-\x1f\x7f]/.test(path) ? JSON.stringify(path) : path
 }
 
 async function collectUntrackedPaths(ctx: WorkflowContext) {

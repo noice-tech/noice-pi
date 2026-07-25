@@ -19,6 +19,8 @@ import {
 const execFileAsync = promisify(execFile)
 
 const modelProse = (overrides = {}) => ({
+  stageChangeIds: [],
+  ignoreChangeIds: [],
   commitType: 'internal',
   commitMessage: 'internal: make commit handling deterministic',
   prType: 'internal',
@@ -28,6 +30,12 @@ const modelProse = (overrides = {}) => ({
   context: ['The model now supplies prose only.'],
   ...overrides
 })
+const modelProseFor = (input, overrides = {}) =>
+  modelProse({
+    stageChangeIds: input.changes.map((change) => change.id),
+    ignoreChangeIds: [],
+    ...overrides
+  })
 const prose = validateCommitProse(modelProse(), 'internal', 'changelog')
 
 function ok(stdout = '') {
@@ -180,6 +188,78 @@ test('strict prose validation rejects extras, prefixed headlines, and selected-t
   )
 })
 
+test('change selection must exactly partition opaque status IDs', () => {
+  const changes = [
+    {
+      id: 'change-1',
+      status: ' M',
+      paths: ['owned.ts'],
+      display: ' M owned.ts'
+    },
+    {
+      id: 'change-2',
+      status: '??',
+      paths: ['external.log'],
+      display: '?? external.log'
+    }
+  ]
+  assert.deepEqual(
+    validateCommitProse(
+      modelProse({
+        stageChangeIds: ['change-1'],
+        ignoreChangeIds: ['change-2']
+      }),
+      'internal',
+      null,
+      changes
+    ).stageChangeIds,
+    ['change-1']
+  )
+  assert.throws(
+    () =>
+      validateCommitProse(
+        modelProse({
+          stageChangeIds: ['rename'],
+          ignoreChangeIds: ['recreated-source']
+        }),
+        'internal',
+        null,
+        [
+          {
+            id: 'rename',
+            status: 'R ',
+            paths: ['old.txt', 'new.txt'],
+            display: 'R  old.txt -> new.txt'
+          },
+          {
+            id: 'recreated-source',
+            status: '??',
+            paths: ['old.txt'],
+            display: '?? old.txt'
+          }
+        ]
+      ),
+    /entries sharing a path must be selected or ignored together/
+  )
+  for (const selection of [
+    { stageChangeIds: ['change-1'], ignoreChangeIds: [] },
+    {
+      stageChangeIds: ['change-1'],
+      ignoreChangeIds: ['change-1', 'change-2']
+    },
+    {
+      stageChangeIds: ['change-1', 'unknown'],
+      ignoreChangeIds: ['change-2']
+    }
+  ]) {
+    assert.throws(
+      () =>
+        validateCommitProse(modelProse(selection), 'internal', null, changes),
+      /partition every supplied change ID exactly once/
+    )
+  }
+})
+
 test('PR body ownership is deterministic while manual sections are preserved', () => {
   const existing = `Intro that should stay.\n\n## Summary\n\n- stale\n\n## Reviewer notes\n\n- Keep this checklist\n\n## Changelog\n\nPublic summary:\n\n- stale\n\n## Screenshots\n\n![demo](demo.png)\n\n## Verification\n\n- stale`
   const body = mergePullRequestBody(existing, prose, 'Not run')
@@ -290,7 +370,7 @@ test('dirty default branch is forked, includes untracked content, and runs from 
       {
         async generateProse(value) {
           input = value
-          return modelProse({
+          return modelProseFor(value, {
             commitMessage: 'internal: cover untracked state',
             prHeadline: 'cover untracked state'
           })
@@ -337,6 +417,153 @@ test('dirty default branch is forked, includes untracked content, and runs from 
   }
 })
 
+test('model-selected changes commit while unrelated files remain untouched', async () => {
+  const fixture = await repositoryFixture()
+  try {
+    await writeFile(join(fixture.repo, 'ignored.txt'), 'baseline\n')
+    await git(fixture.repo, 'add', 'ignored.txt')
+    await git(fixture.repo, 'commit', '-m', 'internal: add ignored fixture')
+    await git(fixture.repo, 'push', 'origin', 'main')
+
+    await writeFile(join(fixture.repo, 'package.json'), '{"owned":true}\n')
+    await writeFile(
+      join(fixture.repo, 'ignored.txt'),
+      'external staged change\n'
+    )
+    await writeFile(join(fixture.repo, 'external.log'), 'external untracked\n')
+    await git(fixture.repo, 'add', 'ignored.txt')
+    const ignoredIndexBefore = await git(
+      fixture.repo,
+      'ls-files',
+      '--stage',
+      'ignored.txt'
+    )
+
+    const workflow = await executeCommitWorkflow(
+      fixture.ctx,
+      'internal',
+      'commit only the owned package change',
+      {
+        generateProse: async (input) => {
+          const owned = input.changes.find((change) =>
+            change.paths.includes('package.json')
+          )
+          const ignored = input.changes.filter((change) => change !== owned)
+          return modelProse({
+            stageChangeIds: [owned.id],
+            ignoreChangeIds: ignored.map((change) => change.id),
+            commitMessage: 'internal: commit owned package change',
+            prHeadline: 'commit owned package change'
+          })
+        }
+      }
+    )
+
+    assert.equal(workflow.status, 'committed')
+    assert.match(
+      workflow.notes.join('\n'),
+      /left 2 unrelated changes untouched/
+    )
+    assert.equal(
+      await git(fixture.repo, 'show', '--format=', '--name-only', 'HEAD'),
+      'package.json'
+    )
+    assert.equal(
+      await git(fixture.repo, 'ls-files', '--stage', 'ignored.txt'),
+      ignoredIndexBefore,
+      'ignored pre-staged index blob must be preserved exactly'
+    )
+    assert.equal(
+      await readFile(join(fixture.repo, 'ignored.txt'), 'utf8'),
+      'external staged change\n'
+    )
+    assert.equal(
+      await readFile(join(fixture.repo, 'external.log'), 'utf8'),
+      'external untracked\n'
+    )
+    assert.match(
+      await git(fixture.repo, 'status', '--short'),
+      /M  ignored\.txt/
+    )
+    assert.match(
+      await git(fixture.repo, 'status', '--short'),
+      /\?\? external\.log/
+    )
+  } finally {
+    await fixture.cleanup()
+  }
+})
+
+test('all-ignored dirty default branch is left entirely untouched', async () => {
+  const fixture = await repositoryFixture()
+  try {
+    await writeFile(join(fixture.repo, 'external.log'), 'external only\n')
+    const head = await git(fixture.repo, 'rev-parse', 'HEAD')
+    const status = await git(fixture.repo, 'status', '--porcelain=v1')
+    const workflow = await executeCommitWorkflow(fixture.ctx, 'internal', '', {
+      generateProse: async (input) =>
+        modelProse({
+          stageChangeIds: [],
+          ignoreChangeIds: input.changes.map((change) => change.id),
+          commitMessage: 'internal: ignore unrelated external state',
+          prHeadline: 'ignore unrelated external state'
+        })
+    })
+
+    assert.equal(workflow.status, 'no_changes')
+    assert.equal(await git(fixture.repo, 'branch', '--show-current'), 'main')
+    assert.equal(await git(fixture.repo, 'rev-parse', 'HEAD'), head)
+    assert.equal(await git(fixture.repo, 'status', '--porcelain=v1'), status)
+    assert.equal(fixture.prs.length, 0)
+    assert.equal(
+      fixture.calls.some(({ args }) => args[0] === 'push'),
+      false
+    )
+  } finally {
+    await fixture.cleanup()
+  }
+})
+
+test('all-ignored dirtiness does not contaminate an ahead commit', async () => {
+  const fixture = await repositoryFixture()
+  try {
+    await writeFile(join(fixture.repo, 'package.json'), '{"ahead":true}\n')
+    await git(fixture.repo, 'add', 'package.json')
+    await git(fixture.repo, 'commit', '-m', 'internal: local ahead')
+    const head = await git(fixture.repo, 'rev-parse', 'HEAD')
+    await writeFile(join(fixture.repo, 'external.log'), 'external only\n')
+
+    const workflow = await executeCommitWorkflow(fixture.ctx, 'internal', '', {
+      generateProse: async (input) =>
+        modelProse({
+          stageChangeIds: [],
+          ignoreChangeIds: input.changes.map((change) => change.id),
+          commitMessage: 'internal: local ahead',
+          prHeadline: 'local ahead'
+        })
+    })
+
+    assert.equal(workflow.commit, null)
+    assert.notEqual(await git(fixture.repo, 'branch', '--show-current'), 'main')
+    assert.equal(await git(fixture.repo, 'rev-parse', 'HEAD'), head)
+    assert.equal(
+      await readFile(join(fixture.repo, 'external.log'), 'utf8'),
+      'external only\n'
+    )
+    assert.equal(fixture.prs.length, 1)
+    const remoteSha = await git(
+      fixture.repo,
+      'ls-remote',
+      '--heads',
+      'origin',
+      `refs/heads/${await git(fixture.repo, 'branch', '--show-current')}`
+    )
+    assert.equal(remoteSha.split(/\s+/, 1)[0], head)
+  } finally {
+    await fixture.cleanup()
+  }
+})
+
 test('clean-ahead default branch is forked before push without creating another commit', async () => {
   const fixture = await repositoryFixture()
   try {
@@ -348,8 +575,8 @@ test('clean-ahead default branch is forked before push without creating another 
     await git(fixture.repo, 'commit', '-m', 'internal: local ahead')
     const head = await git(fixture.repo, 'rev-parse', 'HEAD')
     const workflow = await executeCommitWorkflow(fixture.ctx, 'internal', '', {
-      generateProse: async () =>
-        modelProse({
+      generateProse: async (input) =>
+        modelProseFor(input, {
           commitMessage: 'internal: local ahead',
           prHeadline: 'local ahead'
         })
@@ -369,12 +596,12 @@ test('repository drift during prose generation aborts before branch, stage, comm
     await writeFile(join(fixture.repo, 'package.json'), '{"dirty":true}\n')
     await assert.rejects(
       executeCommitWorkflow(fixture.ctx, 'internal', '', {
-        async generateProse() {
+        async generateProse(input) {
           await writeFile(
             join(fixture.repo, 'package.json'),
             '{"drifted":true}\n'
           )
-          return modelProse()
+          return modelProseFor(input)
         }
       }),
       (error) =>
@@ -435,7 +662,13 @@ test('a change arriving after snapshot revalidation but before staging is never 
     const originalExec = fixture.ctx.exec.bind(fixture.ctx)
     let injected = false
     fixture.ctx.exec = async (command, args, options) => {
-      if (!injected && command === 'git' && args.join(' ') === 'add -A') {
+      if (
+        !injected &&
+        command === 'env' &&
+        args[0].includes('noice-changelog-commit-') &&
+        args.includes('add') &&
+        args.includes('-A')
+      ) {
         injected = true
         await writeFile(
           join(fixture.repo, 'package.json'),
@@ -447,11 +680,11 @@ test('a change arriving after snapshot revalidation but before staging is never 
 
     await assert.rejects(
       executeCommitWorkflow(fixture.ctx, 'internal', '', {
-        generateProse: async () => modelProse()
+        generateProse: async (input) => modelProseFor(input)
       }),
       (error) =>
         error instanceof WorkflowFailure &&
-        /changed before staging/.test(error.message)
+        /Repository changed/.test(error.message)
     )
     assert.equal(injected, true)
     assert.equal(await git(fixture.repo, 'rev-parse', 'HEAD'), originalHead)
@@ -492,7 +725,7 @@ test('a concurrent commit created after validation is never pushed', async () =>
     }
 
     const workflow = await executeCommitWorkflow(fixture.ctx, 'internal', '', {
-      generateProse: async () => modelProse()
+      generateProse: async (input) => modelProseFor(input)
     })
     assert.equal(workflow.status, 'committed')
     assert.equal(injected, true)
@@ -524,17 +757,43 @@ test('post-commit worktree changes are reported and never pushed', async () => {
     )
     await assert.rejects(
       executeCommitWorkflow(fixture.ctx, 'internal', '', {
-        generateProse: async () => modelProse()
+        generateProse: async (input) => modelProseFor(input)
       }),
       (error) =>
         error instanceof WorkflowFailure &&
         error.workflow.commit !== null &&
-        /not clean after commit/.test(error.message)
+        /changed outside/.test(error.message)
     )
     assert.equal(
       fixture.calls.some(({ args }) => args[0] === 'push'),
       false,
       'post-commit drift must prevent push'
+    )
+  } finally {
+    await fixture.cleanup()
+  }
+})
+
+test('commit hooks cannot append unreviewed commit-message bodies', async () => {
+  const fixture = await repositoryFixture()
+  try {
+    await writeFile(join(fixture.repo, 'package.json'), '{"dirty":true}\n')
+    await writeFile(
+      join(fixture.repo, '.git', 'hooks', 'commit-msg'),
+      '#!/bin/sh\nprintf "\\nunreviewed body\\n" >> "$1"\n',
+      { mode: 0o755 }
+    )
+    await assert.rejects(
+      executeCommitWorkflow(fixture.ctx, 'internal', '', {
+        generateProse: async (input) => modelProseFor(input)
+      }),
+      (error) =>
+        error instanceof WorkflowFailure &&
+        /changed the commit message/.test(error.message)
+    )
+    assert.equal(
+      fixture.calls.some(({ args }) => args[0] === 'push'),
+      false
     )
   } finally {
     await fixture.cleanup()

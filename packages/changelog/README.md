@@ -53,7 +53,7 @@ Other inputs use a filesystem-safe slug derived from the argument. The public fi
 
 ## Deterministic `/commit` workflow
 
-`/commit` waits for the active turn to finish, then the extension inspects and mutates Git and GitHub. It stages and commits **all current changes**, pushes the branch, and creates or updates the matching PR. Commit and PR wording comes from a hidden prose-only turn branched from the active conversation, preserving its context and provider prompt cache. The extension blocks tools during that turn, strictly validates its typed JSON response, and returns to the original conversation branch before creating any commit.
+`/commit` waits for the active turn to finish, then the extension inspects and mutates Git and GitHub. A hidden turn branched from the active conversation decides which opaque status entries belong to the user's work and generates commit/PR wording, preserving conversation context and the provider prompt cache. The extension blocks tools during that turn and strictly validates that every dirty entry is selected or intentionally ignored. It then returns to the original conversation branch, commits only selected entries through an isolated Git index, leaves ignored worktree and staged state untouched, pushes the branch, and creates or updates the matching PR.
 
 An existing open PR keeps its base branch. For a new PR, base configuration is read in this order:
 
@@ -66,5 +66,5 @@ Set a base explicitly with, for example, `git config branch.my-branch.noice-base
 ## Requirements and side effects
 
 - Git and an authenticated [GitHub CLI](https://cli.github.com/) are required for `/commit`, `/unreleased`, and `/release-notes`.
-- `/commit` can fetch remote refs, create a branch, stage all changes, commit, push, and create or update a PR. No shell or repository tools are exposed to its prose-only model call.
+- `/commit` can fetch remote refs, create a branch, stage model-selected changes, commit, push, and create or update a PR. The model returns only strict selection/prose JSON; no shell or repository tools are exposed to it, and the extension performs every mutation.
 - `/unreleased` fetches tags but changes no source or GitHub state. `/release-notes` overwrites its two output files.

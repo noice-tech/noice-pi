@@ -9,6 +9,8 @@ const readAsset = (relativePath) =>
 
 test('commit prose enforces unscoped commits and layout-derived PR scopes', () => {
   const base = {
+    stageChangeIds: [],
+    ignoreChangeIds: [],
     commitType: 'fix',
     commitMessage: 'fix: prevent hidden tracks from rendering',
     prType: 'fix',

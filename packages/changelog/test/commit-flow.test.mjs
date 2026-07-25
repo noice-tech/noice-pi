@@ -27,6 +27,8 @@ test('prose generation reuses the active conversation and keeps tools read-only'
   assert.doesNotMatch(source, /running deterministically/i)
   assert.doesNotMatch(source, /if \(!auth\.apiKey\)/)
   for (const key of [
+    'stageChangeIds',
+    'ignoreChangeIds',
     'commitType',
     'commitMessage',
     'prType',
@@ -117,6 +119,8 @@ test('prose turn branches from and returns to the active conversation', async ()
               {
                 type: 'text',
                 text: JSON.stringify({
+                  stageChangeIds: [],
+                  ignoreChangeIds: [],
                   commitType: 'internal',
                   commitMessage: 'internal: reuse conversation context',
                   prType: 'internal',
