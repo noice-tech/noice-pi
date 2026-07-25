@@ -31,8 +31,9 @@ const packageSpecifications = {
       'package/README.md',
       'package/LICENSE',
       'package/extensions/changelog/index.ts',
+      'package/extensions/changelog/commit-workflow.ts',
       'package/extensions/changelog/rules.md',
-      'package/extensions/changelog/worker-prompt.md',
+      'package/extensions/changelog/prose-prompt.md',
       'package/prompts/release-notes.md',
       'package/prompts/setup-release-notes-style.md',
       'package/prompts/unreleased.md'

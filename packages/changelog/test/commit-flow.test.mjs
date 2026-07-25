@@ -1,98 +1,92 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 import noiceChangelogExtension from '../extensions/changelog/index.ts'
 
-const PROMPT_MESSAGE_TYPE = 'noice-changelog-commit-worker-prompt'
 const RESULT_MESSAGE_TYPE = 'noice-changelog-commit-result'
 
-test('/commit selects immediately, then waits for the active turn', async () => {
+test('direct prose generation uses the simple reasoning contract and strict completion', async () => {
+  const source = await readFile(
+    new URL('../extensions/changelog/index.ts', import.meta.url),
+    'utf8'
+  )
+  const prompt = await readFile(
+    new URL('../extensions/changelog/prose-prompt.md', import.meta.url),
+    'utf8'
+  )
+  assert.match(source, /completeSimple\(/)
+  assert.match(source, /reasoning:/)
+  assert.doesNotMatch(source, /temperature:/)
+  assert.match(source, /stopReason !== 'stop'/)
+  assert.doesNotMatch(source, /if \(!auth\.apiKey\)/)
+  for (const key of [
+    'commitType',
+    'commitMessage',
+    'prType',
+    'prHeadline',
+    'summary',
+    'publicSummary',
+    'context'
+  ]) {
+    assert.ok(prompt.includes(`\`${key}\``))
+  }
+})
+
+function result(stdout = '', code = 0, stderr = '') {
+  return { stdout, stderr, code, killed: false }
+}
+
+test('/commit selects immediately, waits for idle, and does not trigger an agent turn', async () => {
   const events = []
   const notifications = []
   const sentMessages = []
-  const thinkingLevels = []
-  const handlers = new Map()
   let command
   let idle = false
-  let leafId = 'source-leaf'
-  let thinkingLevel = 'high'
   let idleWaiters = []
-
-  const setIdle = (value) => {
-    idle = value
-    if (!idle) return
-
-    const waiters = idleWaiters
-    idleWaiters = []
-    for (const resolve of waiters) resolve()
-  }
-
-  const emit = (name, event) => {
-    for (const handler of handlers.get(name) ?? []) handler(event)
-  }
-
-  const pi = {
-    on(name, handler) {
-      handlers.set(name, [...(handlers.get(name) ?? []), handler])
-    },
-    registerCommand(name, registered) {
-      if (name === 'commit') command = registered
-    },
-    registerMessageRenderer() {},
-    getThinkingLevel() {
-      return thinkingLevel
-    },
-    setThinkingLevel(level) {
-      thinkingLevel = level
-      thinkingLevels.push(level)
-      events.push(`thinking:${level}`)
-    },
-    sendMessage(message, options) {
-      sentMessages.push({ message, options })
-      events.push(`send:${message.customType}`)
-
-      if (message.customType !== PROMPT_MESSAGE_TYPE) return
-
-      leafId = 'worker-leaf'
-      setIdle(false)
-      queueMicrotask(() => {
-        emit('agent_end', {
-          messages: [
-            {
-              role: 'custom',
-              customType: PROMPT_MESSAGE_TYPE,
-              content: message.content
-            },
-            {
-              role: 'assistant',
-              content: [{ type: 'text', text: 'status: committed' }]
-            }
-          ]
-        })
-        setIdle(true)
-      })
-    }
-  }
 
   const ctx = {
     mode: 'json',
-    isIdle() {
-      return idle
-    },
+    cwd: '/repo',
+    model: undefined,
+    modelRegistry: {},
+    isIdle: () => idle,
     waitForIdle() {
       events.push('waitForIdle')
       if (idle) return Promise.resolve()
       return new Promise((resolve) => idleWaiters.push(resolve))
     },
-    sessionManager: {
-      getLeafId() {
-        return leafId
+    async exec(commandName, args) {
+      events.push(`${commandName} ${args.join(' ')}`)
+      const commandLine = `${commandName} ${args.join(' ')}`
+      if (commandLine === 'git branch --show-current') return result('main\n')
+      if (commandLine.startsWith('git status ')) return result('')
+      if (commandLine === 'git ls-files --others --exclude-standard -z')
+        return result('')
+      if (commandLine.startsWith('gh repo view ')) {
+        return result(
+          JSON.stringify({
+            nameWithOwner: 'owner/repo',
+            defaultBranchRef: { name: 'main' }
+          })
+        )
       }
-    },
-    async navigateTree(targetLeafId) {
-      events.push(`navigate:${targetLeafId}`)
-      leafId = targetLeafId
-      return { cancelled: false }
+      if (commandLine.startsWith('gh pr list ')) return result('[]')
+      if (commandLine.startsWith('git config --get ')) return result('', 1)
+      if (commandLine === 'git fetch --prune origin') return result('')
+      if (
+        commandLine === 'git show-ref --verify --quiet refs/remotes/origin/main'
+      )
+        return result('')
+      if (commandLine === 'git rev-parse --verify origin/main')
+        return result('abc')
+      if (commandLine === 'git rev-parse HEAD') return result('abc')
+      if (commandLine.startsWith('git rev-list --count ')) return result('0\n')
+      if (commandLine.startsWith('git diff ')) return result('')
+      if (commandLine.startsWith('git log ')) return result('')
+      if (commandLine === 'git rev-parse --show-toplevel')
+        return result('/repo\n')
+      throw new Error(`unexpected command: ${commandLine}`)
     },
     ui: {
       async select() {
@@ -101,68 +95,125 @@ test('/commit selects immediately, then waits for the active turn', async () => 
       },
       notify(message, type) {
         notifications.push({ message, type })
-        events.push(`notify:${message}`)
       },
       setWidget() {}
     }
   }
+  const pi = {
+    on() {},
+    registerMessageRenderer() {},
+    registerCommand(name, registered) {
+      if (name === 'commit') command = registered
+    },
+    sendMessage(message, options) {
+      sentMessages.push({ message, options })
+    },
+    exec: ctx.exec.bind(ctx),
+    getThinkingLevel() {
+      return 'high'
+    }
+  }
 
   noiceChangelogExtension(pi)
-  assert.ok(command, '/commit command should be registered')
-
-  const firstCommit = command.handler('', ctx)
+  const pending = command.handler('', ctx)
   await new Promise((resolve) => setImmediate(resolve))
-
   assert.equal(events[0], 'select')
-  assert.ok(events.includes('waitForIdle'))
-  assert.equal(
-    sentMessages.some(
-      ({ message }) => message.customType === PROMPT_MESSAGE_TYPE
-    ),
-    false,
-    'worker must not start while the original turn is active'
-  )
   assert.ok(
     notifications.some(({ message }) =>
       message.includes('waiting for the current agent turn')
     )
   )
+  assert.equal(sentMessages.length, 0)
 
-  await command.handler('feat duplicate', ctx)
+  idle = true
+  for (const resolve of idleWaiters.splice(0)) resolve()
+  await pending
+
+  assert.equal(sentMessages.length, 1)
+  assert.equal(sentMessages[0].message.customType, RESULT_MESSAGE_TYPE)
+  assert.equal(sentMessages[0].options, undefined)
+  assert.match(sentMessages[0].message.content, /^status: no_changes/m)
+  assert.doesNotMatch(sentMessages[0].message.content, /worker branch/i)
+})
+
+test('/commit keeps its duplicate guard through asynchronous startup', async () => {
+  const notifications = []
+  let command
+  let releaseIdle
+  const idlePromise = new Promise((resolve) => (releaseIdle = resolve))
+  let firstWait = true
+  const ctx = {
+    mode: 'json',
+    cwd: '/repo',
+    model: undefined,
+    modelRegistry: {},
+    isIdle: () => !firstWait,
+    waitForIdle() {
+      if (firstWait) {
+        firstWait = false
+        return idlePromise
+      }
+      return Promise.resolve()
+    },
+    async exec(commandName, args) {
+      const line = `${commandName} ${args.join(' ')}`
+      if (line === 'git rev-parse --show-toplevel') return result('/repo')
+      if (line === 'git branch --show-current') return result('main')
+      if (line.startsWith('git status ')) return result('')
+      if (line === 'git ls-files --others --exclude-standard -z')
+        return result('')
+      if (line.startsWith('gh repo view '))
+        return result(
+          JSON.stringify({
+            nameWithOwner: 'o/r',
+            defaultBranchRef: { name: 'main' }
+          })
+        )
+      if (line.startsWith('gh pr list ')) return result('[]')
+      if (line.startsWith('git config --get ')) return result('', 1)
+      if (line === 'git fetch --prune origin') return result('')
+      if (line === 'git show-ref --verify --quiet refs/remotes/origin/main')
+        return result('')
+      if (line === 'git rev-parse --verify origin/main') return result('abc')
+      if (line === 'git rev-parse HEAD') return result('abc')
+      if (line.startsWith('git rev-list --count ')) return result('0')
+      if (line.startsWith('git diff ') || line.startsWith('git log '))
+        return result('')
+      throw new Error(line)
+    },
+    ui: {
+      async select() {
+        throw new Error('explicit type must not select')
+      },
+      notify(message, type) {
+        notifications.push({ message, type })
+      },
+      setWidget() {}
+    }
+  }
+  const pi = {
+    on() {},
+    registerMessageRenderer() {},
+    registerCommand(name, value) {
+      if (name === 'commit') command = value
+    },
+    sendMessage() {},
+    exec: ctx.exec.bind(ctx),
+    getThinkingLevel() {
+      return 'high'
+    }
+  }
+  noiceChangelogExtension(pi)
+
+  const first = command.handler('feat first', ctx)
+  await new Promise((resolve) => setImmediate(resolve))
+  await command.handler('fix duplicate', ctx)
   assert.ok(
     notifications.some(
       ({ message, type }) =>
         message === 'Commit command is already active' && type === 'warning'
-    ),
-    'a second command must not overwrite the pending worker waiter'
-  )
-
-  setIdle(true)
-  await firstCommit
-
-  const prompt = sentMessages.find(
-    ({ message }) => message.customType === PROMPT_MESSAGE_TYPE
-  )
-  assert.ok(prompt, 'worker prompt should be sent after idle')
-  assert.deepEqual(prompt.options, {
-    triggerTurn: true,
-    deliverAs: 'followUp'
-  })
-  assert.match(prompt.message.content, /Selected change type:\s*fix/)
-  assert.deepEqual(
-    thinkingLevels,
-    [],
-    '/commit must preserve the user-selected thinking level'
-  )
-  assert.equal(thinkingLevel, 'high')
-  assert.ok(events.indexOf('select') < events.indexOf('waitForIdle'))
-  assert.ok(
-    events.indexOf('waitForIdle') <
-      events.indexOf(`send:${PROMPT_MESSAGE_TYPE}`)
-  )
-  assert.ok(
-    sentMessages.some(
-      ({ message }) => message.customType === RESULT_MESSAGE_TYPE
     )
   )
+  releaseIdle()
+  await first
 })

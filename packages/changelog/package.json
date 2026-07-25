@@ -30,14 +30,16 @@
     "url": "https://github.com/noice-tech/noice-pi/issues"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit --allowImportingTsExtensions --moduleResolution bundler --module ESNext --target ES2022 --skipLibCheck extensions/changelog/index.ts",
+    "typecheck": "tsc --noEmit --allowImportingTsExtensions --moduleResolution bundler --module ESNext --target ES2022 --skipLibCheck extensions/changelog/index.ts extensions/changelog/commit-workflow.ts",
     "test": "node --test test/*.test.mjs && node ../../scripts/smoke-pack.mjs @noice-tech/pi-changelog packages/changelog"
   },
   "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "0.80.10",
     "@earendil-works/pi-coding-agent": "0.80.10",
     "@earendil-works/pi-tui": "0.80.10",
     "@types/node": "22.20.1",

@@ -51,8 +51,20 @@ Commits always use `type: description`. Multi-package PR titles use `type(packag
 
 Other inputs use a filesystem-safe slug derived from the argument. The public file excludes GitHub links, PR numbers, commit hashes, private URLs, and internal notes. Keep `.pi/tmp/` ignored and unpublished. When `.pi/release-notes-style.md` is absent, the public file is a plain Markdown bullet list.
 
+## Deterministic `/commit` workflow
+
+`/commit` waits for the active turn to finish, then the extension—not a coding-agent turn—inspects and mutates Git and GitHub. It stages and commits **all current changes**, pushes the branch, and creates or updates the matching PR. The active model and thinking level are used only for a direct, tool-free prose request; its typed JSON response is strictly validated before any commit is created.
+
+An existing open PR keeps its base branch. For a new PR, base configuration is read in this order:
+
+1. `branch.<name>.noice-base`
+2. `branch.<name>.gh-merge-base`
+3. unambiguous branch-ancestry inference
+
+Set a base explicitly with, for example, `git config branch.my-branch.noice-base staging`. Ambiguous bases and closed, merged, or multiple matching PRs fail without creating a PR. Rerunning on a clean branch that is ahead of its base safely pushes missing commits and creates, updates, or leaves the single matching PR as appropriate. Existing manual PR sections are retained; `/commit` deterministically owns `Summary`, `Changelog`, and `Verification`.
+
 ## Requirements and side effects
 
 - Git and an authenticated [GitHub CLI](https://cli.github.com/) are required for `/commit`, `/unreleased`, and `/release-notes`.
-- `/commit` uses Bash and `jq`; it can create a branch, commit, push, and create or update a PR.
+- `/commit` can fetch remote refs, create a branch, stage all changes, commit, push, and create or update a PR. No shell or repository tools are exposed to its prose-only model call.
 - `/unreleased` fetches tags but changes no source or GitHub state. `/release-notes` overwrites its two output files.

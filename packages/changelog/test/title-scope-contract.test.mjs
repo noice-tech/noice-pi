@@ -2,46 +2,53 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
+import { validateCommitProse } from '../extensions/changelog/commit-workflow.ts'
+
 const readAsset = (relativePath) =>
   readFile(new URL(relativePath, import.meta.url), 'utf8')
 
-test('commit worker keeps commits unscoped and scopes only multi-package PR titles', async () => {
-  const [rules, workerPrompt] = await Promise.all([
-    readAsset('../extensions/changelog/rules.md'),
-    readAsset('../extensions/changelog/worker-prompt.md')
-  ])
-  const contract = `${rules}\n${workerPrompt}`
-
-  assert.match(
-    contract,
-    /single-package repository or workspace[^\n]+`type: description`/i
+test('commit prose enforces unscoped commits and layout-derived PR scopes', () => {
+  const base = {
+    commitType: 'fix',
+    commitMessage: 'fix: prevent hidden tracks from rendering',
+    prType: 'fix',
+    prHeadline: 'prevent hidden tracks from rendering',
+    summary: ['Prevent hidden tracks from being rendered.'],
+    publicSummary: 'Hidden tracks no longer appear in rendered output.',
+    context: ['Applies to renderer output.']
+  }
+  assert.equal(
+    validateCommitProse(base, 'fix', 'renderer').prTitle,
+    'fix(renderer): prevent hidden tracks from rendering'
   )
-  assert.match(
-    contract,
-    /multi-package workspace[^\n]+`type\(package\): description`/i
+  assert.throws(
+    () =>
+      validateCommitProse(
+        {
+          ...base,
+          commitMessage: 'fix(renderer): prevent hidden tracks from rendering'
+        },
+        'fix',
+        'renderer'
+      ),
+    /unscoped/
   )
-  assert.match(contract, /commit messages always[^\n]+unscoped/i)
-  assert.match(contract, /workspace directory basename/i)
-  assert.match(rules, /count distinct package roots/i)
-  assert.match(rules, /private root manifest[^\n]+does not count/i)
-  assert.match(rules, /two or more[^\n]+multi-package workspace/i)
-  assert.match(
-    workerPrompt,
-    /after committing the current changes so the diff includes them/i
+  assert.throws(
+    () =>
+      validateCommitProse(
+        {
+          ...base,
+          prHeadline: 'fix(editor): prevent hidden tracks from rendering'
+        },
+        'fix',
+        'renderer'
+      ),
+    /must not include/
   )
-  assert.match(
-    workerPrompt,
-    /PR title must describe the cumulative full branch/i
+  assert.equal(
+    validateCommitProse(base, 'fix', null).prTitle,
+    'fix: prevent hidden tracks from rendering'
   )
-  assert.match(workerPrompt, /do not let the latest delta replace/i)
-  assert.match(
-    workerPrompt,
-    /primary source for the current commit wording[^\n]+current change/i
-  )
-  assert.doesNotMatch(workerPrompt, /primary source for commit\/PR wording/i)
-  assert.match(contract, /incidental shared files/i)
-  assert.match(contract, /use exactly one (?:package )?scope/i)
-  assert.match(contract, /`type\(monorepo\): description`/i)
 })
 
 test('changelog prompts accept scoped and unscoped titles without publishing scopes', async () => {
