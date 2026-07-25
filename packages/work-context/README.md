@@ -13,7 +13,7 @@ Changes 7 · 2 untracked   PR ● #42 ↗   CI ✓ 8/8
 pi install npm:@noice-tech/pi-work-context
 ```
 
-Restart Pi after installation. There are no package-specific commands; the display updates automatically.
+Restart Pi after installation. The display updates automatically; use `/work-context` for its optional settings.
 
 ## Terminal title
 
@@ -36,6 +36,14 @@ A clean worktree does not show a changes label, keeping the widget quiet. Work-c
 An attached PR shares the widget below the editor. Its number is clickable, and its dot shows whether the PR is open, draft, merged, or closed.
 
 CI shows `✓ passed/total`, `… passed/total`, `× failed/total`, or `—` when no checks are reported.
+
+### CI completion bell
+
+Run `/work-context` and enable **CI completion bell** to receive a terminal BEL when the current PR's checks finish, whether they pass or fail. It applies immediately, is off by default, and persists across Pi restarts.
+
+The first CI result is a quiet baseline. After that, each observed unfinished → finished transition rings once; repeated results stay quiet, and branch, repository, or PR changes reset the baseline.
+
+Before BEL, the title briefly becomes `CI ✓ #42 — PR title` or `CI × #42 — PR title`, then returns to normal. This works only in TUI sessions with TTY output; the terminal decides whether BEL produces sound, a visual bell, or an attention request.
 
 ## Requirements and fallback
 
