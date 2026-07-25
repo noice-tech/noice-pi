@@ -37,13 +37,13 @@ An attached PR shares the widget below the editor. Its number is clickable, and 
 
 CI shows `✓ passed/total`, `… passed/total`, `× failed/total`, or `—` when no checks are reported.
 
-### CI pass bell
+### CI completion bell
 
-Run `/work-context` and set **CI pass bell** to `on` to receive a terminal BEL when the current PR's checks move from not passed to fully passed. The setting is off by default, takes effect immediately, and persists globally across Pi restarts.
+Run `/work-context` and set **CI completion bell** to `on` to receive a terminal BEL when the current PR's checks finish, whether they pass or fail. The setting is off by default, takes effect immediately, and persists globally across Pi restarts.
 
-The initial CI result establishes a baseline, so opening Pi on an already-passing PR stays quiet. Repeated refreshes also stay quiet; if CI later regresses and recovers, it rings again. No checks is not a passing result.
+The initial CI result establishes a baseline, so opening Pi after CI has already finished stays quiet. Repeated refreshes also stay quiet; if checks begin running again, the bell rings when they finish again. No checks is not a finished result.
 
-BEL output is available only in interactive TUI sessions with TTY output. Your terminal decides whether it produces sound, a visual indicator, or an attention request. Test your terminal with `printf '\a'`.
+BEL output is available only in interactive TUI sessions with TTY output. Immediately before the BEL, the terminal title briefly changes to `CI ✓ #<number> — <PR title>` or `CI × #<number> — <PR title>` so terminal notifications show the result and identify the completed PR, then returns to the normal work-context title. Your terminal decides whether BEL produces sound, a visual indicator, or an attention request. Test your terminal with `printf '\a'`.
 
 ## Requirements and fallback
 

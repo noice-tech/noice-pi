@@ -70,11 +70,11 @@ interface HeadWatcher {
 interface CiObservation {
   root: string
   pullRequestNumber: number
-  passed: boolean
+  finished: boolean
 }
 
 export interface WorkContextSettings {
-  ciPassBell: boolean
+  ciCompletionBell: boolean
 }
 
 export interface WorkContextSettingsStore {
@@ -127,14 +127,14 @@ export function createWorkContextSettingsStore(
     async load() {
       try {
         const settings = await readSettingsFile(path)
-        return { ciPassBell: settings.ciPassBell === true }
+        return { ciCompletionBell: settings.ciCompletionBell === true }
       } catch {
-        return { ciPassBell: false }
+        return { ciCompletionBell: false }
       }
     },
     async save(settings) {
       const current = await readSettingsFile(path)
-      const next = { ...current, ciPassBell: settings.ciPassBell }
+      const next = { ...current, ciCompletionBell: settings.ciCompletionBell }
       const directory = dirname(path)
       const temporaryPath = join(
         directory,
@@ -443,7 +443,7 @@ export function createWorkContext(
     let state: PresentationState = {}
     let activeContext: ExtensionContext | undefined
     let ciObservation: CiObservation | undefined
-    let ciPassBell = false
+    let ciCompletionBell = false
     let refreshRunning = false
     let refreshQueued = false
     let settingsWrite = Promise.resolve()
@@ -586,35 +586,49 @@ export function createWorkContext(
       root: string,
       pullRequest: PullRequest
     ) {
-      const passed =
-        pullRequest.checks.total > 0 &&
-        pullRequest.checks.failed === 0 &&
-        pullRequest.checks.pending === 0
+      const finished =
+        pullRequest.checks.total > 0 && pullRequest.checks.pending === 0
       const previous = ciObservation
       const samePullRequest =
         previous?.root === root &&
         previous.pullRequestNumber === pullRequest.number
-      const shouldRing = samePullRequest && !previous.passed && passed
+      const shouldRing = samePullRequest && !previous.finished && finished
 
       ciObservation = {
         root,
         pullRequestNumber: pullRequest.number,
-        passed
+        finished
       }
 
       if (
         !shouldRing ||
-        !ciPassBell ||
+        !ciCompletionBell ||
         ctx.mode !== 'tui' ||
         output.isTTY !== true
       ) {
         return
       }
 
+      const normalTitle = composeTitle({ ...state, pullRequest })
+      const statusIcon = pullRequest.checks.failed > 0 ? '×' : '✓'
+      try {
+        ctx.ui.setTitle(
+          `CI ${statusIcon} #${pullRequest.number} — ${pullRequest.title}`
+        )
+      } catch {
+        // Notification failures must never interrupt CI refreshes.
+      }
       try {
         output.write(BELL)
       } catch {
         // Notification failures must never interrupt CI refreshes.
+      }
+      if (normalTitle) {
+        try {
+          ctx.ui.setTitle(normalTitle)
+        } catch {
+          // Notification failures must never interrupt CI refreshes.
+        }
       }
     }
 
@@ -814,12 +828,12 @@ export function createWorkContext(
       stopWatchingGitHead()
     }
 
-    function saveCiPassBell(ctx: ExtensionContext, enabled: boolean) {
+    function saveCiCompletionBell(ctx: ExtensionContext, enabled: boolean) {
       settingsWrite = settingsWrite
-        .then(() => settingsStore.save({ ciPassBell: enabled }))
+        .then(() => settingsStore.save({ ciCompletionBell: enabled }))
         .catch(() => {
           ctx.ui.notify(
-            `CI pass bell is ${enabled ? 'on' : 'off'} for this session, but the setting could not be saved.`,
+            `CI completion bell is ${enabled ? 'on' : 'off'} for this session, but the setting could not be saved.`,
             'error'
           )
         })
@@ -836,11 +850,11 @@ export function createWorkContext(
         await ctx.ui.custom((tui, theme, _keybindings, done) => {
           const items: SettingItem[] = [
             {
-              id: 'ci-pass-bell',
-              label: 'CI pass bell',
+              id: 'ci-completion-bell',
+              label: 'CI completion bell',
               description:
-                'Send a terminal bell when the current PR transitions to fully passed CI.',
-              currentValue: ciPassBell ? 'on' : 'off',
+                'Send a terminal bell when the current PR finishes running CI.',
+              currentValue: ciCompletionBell ? 'on' : 'off',
               values: ['off', 'on']
             }
           ]
@@ -857,9 +871,9 @@ export function createWorkContext(
             3,
             getSettingsListTheme(),
             (id, newValue) => {
-              if (id !== 'ci-pass-bell') return
-              ciPassBell = newValue === 'on'
-              saveCiPassBell(ctx, ciPassBell)
+              if (id !== 'ci-completion-bell') return
+              ciCompletionBell = newValue === 'on'
+              saveCiCompletionBell(ctx, ciCompletionBell)
             },
             () => done(undefined)
           )
@@ -889,18 +903,18 @@ export function createWorkContext(
       const expectedGeneration = generation
       activeContext = ctx
       ciObservation = undefined
-      ciPassBell = false
+      ciCompletionBell = false
       refreshQueued = false
       state = { sessionName: cleanSingleLine(pi.getSessionName()) }
 
-      let loadedCiPassBell = false
+      let loadedCiCompletionBell = false
       try {
-        loadedCiPassBell = (await settingsStore.load()).ciPassBell
+        loadedCiCompletionBell = (await settingsStore.load()).ciCompletionBell
       } catch {
         // Missing, unreadable, or malformed settings fail closed.
       }
       if (!isCurrent(expectedGeneration)) return
-      ciPassBell = loadedCiPassBell
+      ciCompletionBell = loadedCiCompletionBell
 
       if (ctx.mode !== 'tui') return
       present(ctx)

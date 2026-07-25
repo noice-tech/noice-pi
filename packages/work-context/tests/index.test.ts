@@ -100,7 +100,7 @@ interface HarnessOptions {
   ghOutput?: string
   pollIntervalMs?: number
   mode?: ExtensionContext['mode']
-  ciPassBell?: boolean
+  ciCompletionBell?: boolean
   isTTY?: boolean
   settingsLoadError?: boolean
   settingsSaveError?: boolean
@@ -117,7 +117,7 @@ function createHarness(options: HarnessOptions = {}) {
   let headChange: (() => void) | undefined
   let watcherError: (() => void) | undefined
   let savedSettings: WorkContextSettings = {
-    ciPassBell: options.ciPassBell ?? false
+    ciCompletionBell: options.ciCompletionBell ?? false
   }
   const watcher = { close: vi.fn() }
   const handlers = new Map<string, Handler>()
@@ -442,17 +442,17 @@ describe('work-context settings persistence', () => {
     const path = join(directory, 'work-context.json')
     try {
       const store = createWorkContextSettingsStore(path)
-      await expect(store.load()).resolves.toEqual({ ciPassBell: false })
+      await expect(store.load()).resolves.toEqual({ ciCompletionBell: false })
 
       await writeFile(
         path,
-        JSON.stringify({ ciPassBell: true, futureSetting: 'keep-me' })
+        JSON.stringify({ ciCompletionBell: true, futureSetting: 'keep-me' })
       )
-      await expect(store.load()).resolves.toEqual({ ciPassBell: true })
+      await expect(store.load()).resolves.toEqual({ ciCompletionBell: true })
 
-      await store.save({ ciPassBell: false })
+      await store.save({ ciCompletionBell: false })
       expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({
-        ciPassBell: false,
+        ciCompletionBell: false,
         futureSetting: 'keep-me'
       })
       expect(await readFile(path, 'utf8')).toMatch(/\n$/)
@@ -468,8 +468,8 @@ describe('work-context settings persistence', () => {
       await writeFile(path, '{broken')
       const store = createWorkContextSettingsStore(path)
 
-      await expect(store.load()).resolves.toEqual({ ciPassBell: false })
-      await expect(store.save({ ciPassBell: true })).rejects.toThrow()
+      await expect(store.load()).resolves.toEqual({ ciCompletionBell: false })
+      await expect(store.save({ ciCompletionBell: true })).rejects.toThrow()
       expect(await readFile(path, 'utf8')).toBe('{broken')
     } finally {
       await rm(directory, { recursive: true, force: true })
@@ -591,7 +591,7 @@ describe('work-context extension behavior', () => {
     }
   )
 
-  it('configures the CI pass bell in a TUI settings list and applies it immediately', async () => {
+  it('configures the CI completion bell in a TUI settings list and applies it immediately', async () => {
     const harness = createHarness({
       ghOutput: pullRequestJson({
         statusCheckRollup: [
@@ -609,11 +609,13 @@ describe('work-context extension behavior', () => {
     expect(harness.customRenders.flat().join('\n')).toContain(
       'Work Context Settings'
     )
-    expect(harness.customRenders.flat().join('\n')).toContain('CI pass bell')
+    expect(harness.customRenders.flat().join('\n')).toContain(
+      'CI completion bell'
+    )
     expect(harness.settingsStore.save).toHaveBeenCalledWith({
-      ciPassBell: true
+      ciCompletionBell: true
     })
-    expect(harness.savedSettings).toEqual({ ciPassBell: true })
+    expect(harness.savedSettings).toEqual({ ciCompletionBell: true })
     expect(harness.requestRender).toHaveBeenCalled()
 
     harness.setGhOutput(pullRequestJson())
@@ -640,10 +642,10 @@ describe('work-context extension behavior', () => {
 
     expect(harness.notifications).toContainEqual({
       message:
-        'CI pass bell is on for this session, but the setting could not be saved.',
+        'CI completion bell is on for this session, but the setting could not be saved.',
       level: 'error'
     })
-    expect(harness.savedSettings).toEqual({ ciPassBell: false })
+    expect(harness.savedSettings).toEqual({ ciCompletionBell: false })
 
     harness.setGhOutput(pullRequestJson())
     await harness.emit('agent_settled')
@@ -665,8 +667,8 @@ describe('work-context extension behavior', () => {
     }
   )
 
-  it('rings only on observed transitions into fully passed CI', async () => {
-    const harness = createHarness({ ciPassBell: true })
+  it('rings when observed CI finishes, regardless of its result', async () => {
+    const harness = createHarness({ ciCompletionBell: true })
     await harness.emit('session_start', { reason: 'startup' })
     await flushBackground()
     expect(harness.writes).toEqual([])
@@ -682,16 +684,7 @@ describe('work-context extension behavior', () => {
     await flushBackground()
     expect(harness.writes).toEqual([])
 
-    harness.setGhOutput(pullRequestJson())
-    await harness.emit('agent_settled')
-    await flushBackground()
-    expect(harness.writes).toEqual([BELL])
-    expect(Buffer.from(harness.writes[0] ?? '')).toEqual(Buffer.from([0x07]))
-
-    await harness.emit('agent_settled')
-    await flushBackground()
-    expect(harness.writes).toEqual([BELL])
-
+    const titlesBeforeCompletion = harness.titles.length
     harness.setGhOutput(
       pullRequestJson({
         statusCheckRollup: [
@@ -705,15 +698,58 @@ describe('work-context extension behavior', () => {
     )
     await harness.emit('agent_settled')
     await flushBackground()
+    expect(harness.writes).toEqual([BELL])
+    expect(Buffer.from(harness.writes[0] ?? '')).toEqual(Buffer.from([0x07]))
+    const completionTitles = harness.titles.slice(titlesBeforeCompletion)
+    const notificationTitleIndex = completionTitles.indexOf(
+      'CI × #42 — Ship work context'
+    )
+    expect(notificationTitleIndex).toBeGreaterThanOrEqual(0)
+    expect(
+      completionTitles.slice(notificationTitleIndex, notificationTitleIndex + 2)
+    ).toEqual(['CI × #42 — Ship work context', '#42 — Ship work context'])
+    expect(harness.titles.at(-1)).toBe('#42 — Ship work context')
+
+    await harness.emit('agent_settled')
+    await flushBackground()
+    harness.setGhOutput(pullRequestJson())
+    await harness.emit('agent_settled')
+    await flushBackground()
+    expect(harness.writes).toEqual([BELL])
+
+    harness.setGhOutput(
+      pullRequestJson({
+        statusCheckRollup: [
+          { __typename: 'CheckRun', status: 'IN_PROGRESS', conclusion: null }
+        ]
+      })
+    )
+    await harness.emit('agent_settled')
+    await flushBackground()
+    const titlesBeforeSuccess = harness.titles.length
     harness.setGhOutput(pullRequestJson())
     await harness.emit('agent_settled')
     await flushBackground()
     expect(harness.writes).toEqual([BELL, BELL])
+    expect(harness.titles.slice(titlesBeforeSuccess)).toContain(
+      'CI ✓ #42 — Ship work context'
+    )
+    expect(harness.titles.at(-1)).toBe('#42 — Ship work context')
 
     harness.setGhOutput(pullRequestJson({ statusCheckRollup: null }))
     await harness.emit('agent_settled')
     await flushBackground()
-    harness.setGhOutput(pullRequestJson())
+    harness.setGhOutput(
+      pullRequestJson({
+        statusCheckRollup: [
+          {
+            __typename: 'CheckRun',
+            status: 'COMPLETED',
+            conclusion: 'FAILURE'
+          }
+        ]
+      })
+    )
     await harness.emit('agent_settled')
     await flushBackground()
     expect(harness.writes).toEqual([BELL, BELL, BELL])
@@ -722,7 +758,7 @@ describe('work-context extension behavior', () => {
   it('does not ring when the setting is disabled or cannot be loaded', async () => {
     for (const options of [
       {},
-      { settingsLoadError: true, ciPassBell: true }
+      { settingsLoadError: true, ciCompletionBell: true }
     ] satisfies HarnessOptions[]) {
       const harness = createHarness({
         ...options,
@@ -739,7 +775,7 @@ describe('work-context extension behavior', () => {
 
   it('preserves the last valid observation across transient GitHub failures', async () => {
     const harness = createHarness({
-      ciPassBell: true,
+      ciCompletionBell: true,
       ghOutput: pullRequestJson({ statusCheckRollup: null })
     })
     await harness.emit('session_start', { reason: 'startup' })
@@ -757,7 +793,7 @@ describe('work-context extension behavior', () => {
 
   it('preserves the last valid observation across transient Git failures', async () => {
     const harness = createHarness({
-      ciPassBell: true,
+      ciCompletionBell: true,
       ghOutput: pullRequestJson({ statusCheckRollup: null })
     })
     await harness.emit('session_start', { reason: 'startup' })
@@ -777,7 +813,7 @@ describe('work-context extension behavior', () => {
   it('uses new baselines after PR, root, HEAD, and session changes', async () => {
     vi.useFakeTimers()
     const pending = pullRequestJson({ statusCheckRollup: null })
-    const harness = createHarness({ ciPassBell: true, ghOutput: pending })
+    const harness = createHarness({ ciCompletionBell: true, ghOutput: pending })
     await harness.emit('session_start', { reason: 'startup' })
     await flushBackground()
 
@@ -830,7 +866,7 @@ describe('work-context extension behavior', () => {
     'does not write a bell when output isTTY is %s',
     async (isTTY) => {
       const harness = createHarness({
-        ciPassBell: true,
+        ciCompletionBell: true,
         isTTY,
         ghOutput: pullRequestJson({ statusCheckRollup: null })
       })
@@ -844,9 +880,9 @@ describe('work-context extension behavior', () => {
     }
   )
 
-  it('swallows output failures without retrying the passed observation', async () => {
+  it('swallows output failures without retrying the finished observation', async () => {
     const harness = createHarness({
-      ciPassBell: true,
+      ciCompletionBell: true,
       outputError: true,
       ghOutput: pullRequestJson({ statusCheckRollup: null })
     })
@@ -1059,7 +1095,7 @@ describe('work-context extension behavior', () => {
       finishStaleGh = resolve
     })
     let ghCalls = 0
-    const harness = createHarness({ ciPassBell: true })
+    const harness = createHarness({ ciCompletionBell: true })
     harness.exec.mockImplementation(async (command: string) => {
       if (command === 'git') {
         return {
@@ -1203,7 +1239,7 @@ describe('work-context extension behavior', () => {
     })
     const harness = createHarness({
       ghOutput: undefined,
-      ciPassBell: true
+      ciCompletionBell: true
     })
     harness.exec.mockImplementation(async (command: string) => {
       if (command === 'git') {
