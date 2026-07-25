@@ -79,6 +79,7 @@ export interface WorkflowResult {
 
 export interface WorkflowDependencies {
   generateProse(input: ProseInput): Promise<unknown>
+  onProgress?(message: string): void
 }
 
 export class WorkflowFailure extends Error {
@@ -147,6 +148,7 @@ export async function executeCommitWorkflow(
   userContext: string,
   dependencies: WorkflowDependencies
 ): Promise<WorkflowResult> {
+  dependencies.onProgress?.('Finding repository root')
   const root = await output(suppliedContext, 'git', [
     'rev-parse',
     '--show-toplevel'
@@ -154,9 +156,11 @@ export async function executeCommitWorkflow(
   if (!root) throw new Error('Could not determine the Git repository root')
   const ctx = { ...suppliedContext, cwd: root }
   const notes: string[] = []
+  dependencies.onProgress?.('Inspecting Git and GitHub state')
   let state = await inspectState(ctx)
 
   if (!state.rawStatus && state.aheadCount === 0 && !state.existingPr) {
+    dependencies.onProgress?.('No changes to commit')
     return result('no_changes', null, null, notes)
   }
 
@@ -165,6 +169,7 @@ export async function executeCommitWorkflow(
   let publishSha = state.headSha
 
   try {
+    dependencies.onProgress?.('Generating commit and PR text')
     const prose = validateCommitProse(
       await dependencies.generateProse({
         selectedChangeType,
@@ -184,12 +189,14 @@ export async function executeCommitWorkflow(
     // The prose call is deliberately the only long-running operation between
     // inspection and mutation. Re-read every input that can affect the commit
     // immediately before changing either local or remote state.
+    dependencies.onProgress?.('Rechecking repository state')
     await assertSnapshotUnchanged(ctx, state.snapshot)
 
     if (
       state.branch === state.repository.defaultBranchRef.name &&
       (state.rawStatus || state.aheadCount > 0)
     ) {
+      dependencies.onProgress?.('Creating a feature branch')
       const newBranch = await createBranch(
         ctx,
         prose.commitType,
@@ -201,6 +208,7 @@ export async function executeCommitWorkflow(
     }
 
     if (state.rawStatus) {
+      dependencies.onProgress?.('Staging all changes')
       await run(ctx, 'git', ['add', '-A'])
       const stagedTree = await output(ctx, 'git', ['write-tree'])
       if (stagedTree !== state.snapshot.prospectiveTree) {
@@ -208,6 +216,7 @@ export async function executeCommitWorkflow(
           'Worktree changed before staging; refusing to commit unreviewed content. Rerun /commit'
         )
       }
+      dependencies.onProgress?.(`Committing: ${prose.commitMessage}`)
       await run(ctx, 'git', ['commit', '-m', prose.commitMessage])
       const [
         committedSha,
@@ -251,10 +260,12 @@ export async function executeCommitWorkflow(
       publishSha = committedSha
     }
 
+    dependencies.onProgress?.(`Pushing ${state.branch}`)
     await pushIfNeeded(ctx, state.branch, publishSha)
 
     // Re-query after pushing so concurrent PR creation and closed/merged state
     // transitions fail closed before any PR mutation.
+    dependencies.onProgress?.('Checking pull request state')
     const matchingPrs = await queryPullRequests(
       ctx,
       state.branch,
@@ -280,6 +291,7 @@ export async function executeCommitWorkflow(
     let finalPr: PullRequest
     let prChanged = false
     if (!existingPr) {
+      dependencies.onProgress?.('Creating pull request')
       finalPr = await createPullRequest(
         ctx,
         state.repository,
@@ -290,6 +302,7 @@ export async function executeCommitWorkflow(
       )
       prChanged = true
     } else if (existingPr.title !== prose.prTitle || existingPr.body !== body) {
+      dependencies.onProgress?.(`Updating pull request #${existingPr.number}`)
       finalPr = await updatePullRequest(
         ctx,
         state.repository,
@@ -299,6 +312,7 @@ export async function executeCommitWorkflow(
       )
       prChanged = true
     } else {
+      dependencies.onProgress?.(`Pull request #${existingPr.number} is current`)
       finalPr = existingPr
     }
 
@@ -327,24 +341,20 @@ export async function executeCommitWorkflow(
 }
 
 async function inspectState(ctx: WorkflowContext): Promise<InspectedState> {
-  const branch = await output(ctx, 'git', ['branch', '--show-current'])
-  if (!branch) throw new Error('Detached HEAD is not supported by /commit')
-
-  const rawStatus = await rawOutput(ctx, 'git', [
-    'status',
-    '--porcelain=v1',
-    '-z',
-    '-uall'
-  ])
-  if (rawStatus) await assertNoUnmergedStatus(ctx)
-  const prospectiveTree = rawStatus ? await computeProspectiveTree(ctx) : null
-  const repository = parseJson<GitHubRepository>(
-    await output(ctx, 'gh', [
+  const [branch, rawStatus, repositoryText] = await Promise.all([
+    output(ctx, 'git', ['branch', '--show-current']),
+    rawOutput(ctx, 'git', ['status', '--porcelain=v1', '-z', '-uall']),
+    output(ctx, 'gh', [
       'repo',
       'view',
       '--json',
       'nameWithOwner,defaultBranchRef'
-    ]),
+    ])
+  ])
+  if (!branch) throw new Error('Detached HEAD is not supported by /commit')
+
+  const repository = parseJson<GitHubRepository>(
+    repositoryText,
     'GitHub repository'
   )
   if (
@@ -356,40 +366,42 @@ async function inspectState(ctx: WorkflowContext): Promise<InspectedState> {
       'GitHub repository response did not include a valid owner or default branch'
     )
   }
-  await run(ctx, 'git', ['fetch', '--prune', 'origin'])
-
-  // A default branch name is routinely reused across the repository's entire
-  // history. Never let an old PR whose head happened to have that name bind a
-  // new run; default-branch work is forked below instead.
-  const prs =
+  // Remote refresh, local tree inspection, and GitHub PR lookup are
+  // independent network/disk operations. Run them together so startup time is
+  // bounded by the slowest one rather than the sum of all three.
+  const [, prospectiveTree, prs] = await Promise.all([
+    run(ctx, 'git', ['fetch', '--prune', 'origin']),
+    rawStatus
+      ? (async () => {
+          await assertNoUnmergedStatus(ctx)
+          return computeProspectiveTree(ctx)
+        })()
+      : Promise.resolve(null),
+    // A default branch name is routinely reused across the repository's entire
+    // history. Never let an old PR whose head happened to have that name bind a
+    // new run; default-branch work is forked below instead.
     branch === repository.defaultBranchRef.name
-      ? []
-      : await queryPullRequests(ctx, branch, repository)
+      ? Promise.resolve([])
+      : queryPullRequests(ctx, branch, repository)
+  ])
   const existingPr = selectOpenPullRequest(prs)
   const baseBranch =
     existingPr?.baseRefName ??
     (await resolveBaseBranch(ctx, branch, repository.defaultBranchRef.name))
   await ensureRemoteBranch(ctx, baseBranch)
 
-  const aheadText = await output(ctx, 'git', [
-    'rev-list',
-    '--count',
-    `origin/${baseBranch}..HEAD`
+  const [aheadText, headSha, trackedDiff, untrackedPaths] = await Promise.all([
+    output(ctx, 'git', ['rev-list', '--count', `origin/${baseBranch}..HEAD`]),
+    output(ctx, 'git', ['rev-parse', 'HEAD']),
+    rawOutput(ctx, 'git', ['diff', '--no-ext-diff', '--binary', 'HEAD']),
+    collectUntrackedPaths(ctx)
   ])
   const aheadCount = Number.parseInt(aheadText, 10)
   if (!Number.isFinite(aheadCount))
     throw new Error('Could not determine branch commit count')
 
-  const headSha = await output(ctx, 'git', ['rev-parse', 'HEAD'])
-  const trackedDiff = await rawOutput(ctx, 'git', [
-    'diff',
-    '--no-ext-diff',
-    '--binary',
-    'HEAD'
-  ])
-  const untrackedPaths = await collectUntrackedPaths(ctx)
-  const untracked = await collectUntrackedMaterial(ctx.cwd, untrackedPaths)
-  const [diff, commits, changedFiles] = await Promise.all([
+  const [untracked, diff, commits, changedFiles] = await Promise.all([
+    collectUntrackedMaterial(ctx.cwd, untrackedPaths),
     collectBoundedDiff(ctx, baseBranch),
     output(ctx, 'git', ['log', '--format=%h %s', `origin/${baseBranch}..HEAD`]),
     collectChangedFiles(ctx, baseBranch, untrackedPaths)
@@ -423,26 +435,23 @@ async function inspectState(ctx: WorkflowContext): Promise<InspectedState> {
 async function captureSnapshot(
   ctx: WorkflowContext
 ): Promise<WorktreeSnapshot> {
-  const branch = await output(ctx, 'git', ['branch', '--show-current'])
-  const headSha = await output(ctx, 'git', ['rev-parse', 'HEAD'])
-  const rawStatus = await rawOutput(ctx, 'git', [
-    'status',
-    '--porcelain=v1',
-    '-z',
-    '-uall'
+  const [branch, headSha, rawStatus, trackedDiff, untrackedPaths] =
+    await Promise.all([
+      output(ctx, 'git', ['branch', '--show-current']),
+      output(ctx, 'git', ['rev-parse', 'HEAD']),
+      rawOutput(ctx, 'git', ['status', '--porcelain=v1', '-z', '-uall']),
+      rawOutput(ctx, 'git', ['diff', '--no-ext-diff', '--binary', 'HEAD']),
+      collectUntrackedPaths(ctx)
+    ])
+  const [prospectiveTree, untracked] = await Promise.all([
+    rawStatus
+      ? (async () => {
+          await assertNoUnmergedStatus(ctx)
+          return computeProspectiveTree(ctx)
+        })()
+      : Promise.resolve(null),
+    collectUntrackedMaterial(ctx.cwd, untrackedPaths)
   ])
-  if (rawStatus) await assertNoUnmergedStatus(ctx)
-  const prospectiveTree = rawStatus ? await computeProspectiveTree(ctx) : null
-  const trackedDiff = await rawOutput(ctx, 'git', [
-    'diff',
-    '--no-ext-diff',
-    '--binary',
-    'HEAD'
-  ])
-  const untracked = await collectUntrackedMaterial(
-    ctx.cwd,
-    await collectUntrackedPaths(ctx)
-  )
   return {
     branch,
     headSha,

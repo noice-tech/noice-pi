@@ -114,36 +114,45 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
       }
       if (!parsed) return
 
-      showCommitBanner(ctx)
-      ctx.ui.notify(`Starting commit workflow (${parsed.changeType})`, 'info')
+      const progress = createCommitProgress(ctx, parsed.changeType)
+      ctx.ui.notify(`Starting /commit (${parsed.changeType})`, 'info')
       try {
         const workflow = await executeCommitWorkflow(
           { cwd: ctx.cwd, exec: pi.exec.bind(pi) },
           parsed.changeType,
           parsed.context,
           {
-            generateProse: (input) => generateProse(pi, ctx, input)
+            generateProse: (input) => generateProse(pi, ctx, input),
+            onProgress: progress.update
           }
         )
-        const summary = formatWorkflowResult(workflow)
+        progress.finish()
+        const summary = formatWorkflowResult(workflow, progress.activity())
         await sendResult(ctx, pi, summary, {
           changeType: parsed.changeType,
           userContext: parsed.context,
           status: workflow.status === 'failed' ? 'failed' : 'ok'
         })
-        ctx.ui.notify(formatCommitNotification(summary, 'ok'), 'info')
+        ctx.ui.notify(
+          formatCommitNotification(formatWorkflowResult(workflow), 'ok'),
+          'info'
+        )
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        const summary = formatWorkflowResult(
+        progress.fail(message)
+        const failedWorkflow =
           error instanceof WorkflowFailure
             ? error.workflow
             : {
-                status: 'failed',
+                status: 'failed' as const,
                 commit: null,
                 pr: null,
                 verification: 'Not run',
                 notes: [message]
               }
+        const summary = formatWorkflowResult(
+          failedWorkflow,
+          progress.activity()
         )
         await sendResult(ctx, pi, summary, {
           changeType: parsed.changeType,
@@ -223,16 +232,97 @@ async function sendResult(
   pi.sendMessage({ customType: MESSAGE_TYPE, content, display: true, details })
 }
 
-function showCommitBanner(ctx: ExtensionCommandContext) {
-  const message = 'Commit workflow running deterministically…'
-  if (ctx.mode !== 'tui') {
-    ctx.ui.setWidget(COMMIT_WIDGET_KEY, [message])
-    return
+interface ProgressEntry {
+  message: string
+  startedAt: number
+  finishedAt?: number
+}
+
+function createCommitProgress(
+  ctx: ExtensionCommandContext,
+  changeType: ChangeType
+) {
+  const entries: ProgressEntry[] = []
+
+  const render = () => {
+    const visible = entries.slice(-8)
+    const plainLines = [
+      `/commit ${changeType}`,
+      ...visible.map((entry, index) => {
+        const active = index === visible.length - 1 && !entry.finishedAt
+        const elapsed = formatElapsed(
+          (entry.finishedAt ?? Date.now()) - entry.startedAt
+        )
+        return `${active ? '›' : '✓'} ${entry.message} ${elapsed}`
+      })
+    ]
+    if (ctx.mode !== 'tui') {
+      ctx.ui.setWidget(COMMIT_WIDGET_KEY, plainLines)
+      return
+    }
+    ctx.ui.setWidget(
+      COMMIT_WIDGET_KEY,
+      (_tui, theme) =>
+        new Text(
+          [
+            theme.fg('toolTitle', theme.bold(`/commit ${changeType}`)),
+            ...visible.map((entry, index) => {
+              const active = index === visible.length - 1 && !entry.finishedAt
+              const elapsed = theme.fg(
+                'dim',
+                formatElapsed(
+                  (entry.finishedAt ?? Date.now()) - entry.startedAt
+                )
+              )
+              return active
+                ? `${theme.fg('accent', '›')} ${entry.message} ${elapsed}`
+                : `${theme.fg('success', '✓')} ${theme.fg('dim', entry.message)} ${elapsed}`
+            })
+          ].join('\n'),
+          1,
+          0
+        )
+    )
   }
-  ctx.ui.setWidget(
-    COMMIT_WIDGET_KEY,
-    (_tui, theme) => new Text(theme.fg('warning', message), 1, 0)
-  )
+
+  const finishCurrent = () => {
+    const current = entries.at(-1)
+    if (current && !current.finishedAt) current.finishedAt = Date.now()
+  }
+
+  const update = (message: string) => {
+    if (entries.at(-1)?.message === message) return
+    finishCurrent()
+    entries.push({ message, startedAt: Date.now() })
+    render()
+  }
+
+  return {
+    update,
+    finish() {
+      finishCurrent()
+      render()
+    },
+    fail(message: string) {
+      update(`Failed: ${message.split('\n', 1)[0]}`)
+      finishCurrent()
+      render()
+    },
+    activity() {
+      return entries.map((entry) => {
+        const elapsed = formatElapsed(
+          (entry.finishedAt ?? Date.now()) - entry.startedAt
+        )
+        return `${entry.message} ${elapsed}`
+      })
+    }
+  }
+}
+
+function formatElapsed(milliseconds: number) {
+  return milliseconds < 1_000
+    ? `(${milliseconds}ms)`
+    : `(${(milliseconds / 1_000).toFixed(1)}s)`
 }
 
 function getCommitArgumentCompletions(prefix: string) {
@@ -287,7 +377,10 @@ function isChangeType(value: string): value is ChangeType {
   return CHANGE_TYPES.includes(value as ChangeType)
 }
 
-export function formatWorkflowResult(workflow: WorkflowResult) {
+export function formatWorkflowResult(
+  workflow: WorkflowResult,
+  activity: string[] = []
+) {
   const pr = workflow.pr
     ? `#${workflow.pr.number} ${workflow.pr.title} ${workflow.pr.url}`
     : 'none'
@@ -296,7 +389,10 @@ export function formatWorkflowResult(workflow: WorkflowResult) {
     `commit: ${workflow.commit ?? 'none'}`,
     `pr: ${pr}`,
     `verification: ${workflow.verification}`,
-    `notes: ${workflow.notes.length ? workflow.notes.join('; ') : 'none'}`
+    `notes: ${workflow.notes.length ? workflow.notes.join('; ') : 'none'}`,
+    ...(activity.length
+      ? ['', 'activity:', ...activity.map((entry) => `- ${entry}`)]
+      : [])
   ].join('\n')
 }
 

@@ -19,6 +19,7 @@ test('direct prose generation uses the simple reasoning contract and strict comp
   assert.match(source, /reasoning:/)
   assert.doesNotMatch(source, /temperature:/)
   assert.match(source, /stopReason !== 'stop'/)
+  assert.doesNotMatch(source, /running deterministically/i)
   assert.doesNotMatch(source, /if \(!auth\.apiKey\)/)
   for (const key of [
     'commitType',
@@ -41,6 +42,7 @@ test('/commit selects immediately, waits for idle, and does not trigger an agent
   const events = []
   const notifications = []
   const sentMessages = []
+  const widgets = []
   let command
   let idle = false
   let idleWaiters = []
@@ -96,7 +98,9 @@ test('/commit selects immediately, waits for idle, and does not trigger an agent
       notify(message, type) {
         notifications.push({ message, type })
       },
-      setWidget() {}
+      setWidget(_key, content) {
+        widgets.push(content)
+      }
     }
   }
   const pi = {
@@ -133,7 +137,15 @@ test('/commit selects immediately, waits for idle, and does not trigger an agent
   assert.equal(sentMessages[0].message.customType, RESULT_MESSAGE_TYPE)
   assert.equal(sentMessages[0].options, undefined)
   assert.match(sentMessages[0].message.content, /^status: no_changes/m)
+  assert.match(sentMessages[0].message.content, /activity:/)
+  assert.match(
+    sentMessages[0].message.content,
+    /Inspecting Git and GitHub state/
+  )
   assert.doesNotMatch(sentMessages[0].message.content, /worker branch/i)
+  const renderedProgress = widgets.filter(Array.isArray).flat().join('\n')
+  assert.match(renderedProgress, /Finding repository root/)
+  assert.match(renderedProgress, /No changes to commit/)
 })
 
 test('/commit keeps its duplicate guard through asynchronous startup', async () => {
