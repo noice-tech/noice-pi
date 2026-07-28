@@ -1,6 +1,6 @@
 {
   "name": "@noice-tech/pi-cutover",
-  "version": "1.1.3",
+  "version": "1.2.0",
   "description": "Save a plan, compact the session, and start implementation in one Pi command.",
   "type": "module",
   "license": "MIT",
