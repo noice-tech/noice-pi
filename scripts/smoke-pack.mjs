@@ -44,6 +44,19 @@ const packageSpecifications = {
     exactArchive: true,
     dogfoodLocally: true
   },
+  '@noice-tech/pi-cutover': {
+    required: [
+      'package/package.json',
+      'package/README.md',
+      'package/LICENSE',
+      'package/extensions/cutover/index.ts'
+    ],
+    piResources: {
+      extensions: ['./extensions/cutover/index.ts']
+    },
+    exactArchive: true,
+    dogfoodLocally: true
+  },
   '@noice-tech/pi-github-issues': {
     required: [
       'package/package.json',
