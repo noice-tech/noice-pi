@@ -10,7 +10,7 @@ pi install npm:@noice-tech/pi-cutover
 
 ## Usage
 
-First, work with Pi until its latest response is the final implementation plan. Ask it not to implement the plan yet. Then run:
+Work with Pi until you are ready to turn the discussion into an implementation plan, then run:
 
 ```text
 /cutover
@@ -19,13 +19,17 @@ First, work with Pi until its latest response is the final implementation plan. 
 Cutover takes over from there without further interaction:
 
 1. waits for the current turn to finish;
-2. saves the latest assistant response from the active session branch to a temporary Markdown file;
-3. compacts the session using Pi's normal compaction behavior; and
-4. starts a new turn with `Implement the plan from <path>`.
+2. creates an empty `plan.md` in a unique operating-system temporary directory;
+3. explicitly asks the agent to replace that file with a complete plan, without implementing it;
+4. ignores the planning response and verifies directly that the known plan file is non-empty;
+5. compacts the session using Pi's normal compaction behavior; and
+6. starts a new turn with `Implement the plan from <path>`.
 
-The plan is stored as `plan.md` in a unique `pi-cutover-*` directory under the operating system's temporary directory. Cutover reports the path and intentionally leaves it in place so the implementation turn can reread it. Normal operating-system temporary-file cleanup applies.
+Cutover does not copy, infer, or parse a plan from an assistant response. The dedicated planning turn writes the durable artifact directly to the extension-provided path.
 
-If saving or compaction fails, Cutover does not start implementation. A compaction error includes the saved plan path so you can recover manually.
+Cutover intentionally leaves the temporary plan in place so the implementation turn can reread it. Normal operating-system temporary-file cleanup applies.
+
+If planning, file verification, or compaction fails, Cutover does not start implementation. Errors report the plan path when available so you can inspect and recover it manually.
 
 ## Why cut over?
 

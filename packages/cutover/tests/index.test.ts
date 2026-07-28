@@ -1,16 +1,17 @@
-import { readFile, rm } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
-  SessionEntry
+  ExtensionContext
 } from '@earendil-works/pi-coding-agent'
 import { describe, expect, it } from 'vitest'
 import {
   createCutover,
-  latestAssistantText,
-  writeTemporaryPlan
+  createTemporaryPlanFile,
+  planRequest,
+  verifyPlanWritten
 } from '../extensions/cutover/index.js'
 
 type CommandHandler = (
@@ -20,44 +21,24 @@ type CommandHandler = (
 type CompactOptions = NonNullable<
   Parameters<ExtensionCommandContext['compact']>[0]
 >
+type AgentSettledHandler = (
+  event: unknown,
+  context: ExtensionContext
+) => void | Promise<void>
 
 interface HarnessOptions {
-  branch?: SessionEntry[]
-  branchAfterWait?: SessionEntry[]
   idle?: boolean
-  writePlan?: (content: string) => Promise<string>
+  createPlanFile?: () => Promise<string>
+  verifyPlan?: (path: string) => Promise<void>
   waitForIdle?: () => Promise<void>
-  sendError?: Error
-}
-
-function messageEntry(
-  role: 'assistant' | 'user',
-  content: unknown,
-  id: string = role
-): SessionEntry {
-  return {
-    type: 'message',
-    id,
-    parentId: null,
-    timestamp: '2026-01-01T00:00:00.000Z',
-    message: {
-      role,
-      content,
-      timestamp: 0
-    }
-  } as unknown as SessionEntry
-}
-
-function assistantEntry(content: unknown[], id?: string): SessionEntry {
-  return messageEntry('assistant', content, id)
+  sendError?: (content: string, call: number) => Error | undefined
 }
 
 function createHarness(options: HarnessOptions = {}) {
-  let branch = options.branch ?? [
-    assistantEntry([{ type: 'text', text: '# Default plan' }])
-  ]
   let idle = options.idle ?? true
   let compactOptions: CompactOptions | undefined
+  let agentSettled: AgentSettledHandler | undefined
+  let sendCall = 0
   const commands = new Map<
     string,
     { description?: string; handler: CommandHandler }
@@ -68,16 +49,26 @@ function createHarness(options: HarnessOptions = {}) {
   }> = []
   const sentMessages: string[] = []
   const sequence: string[] = []
-  const writtenPlans: string[] = []
-  const writePlan =
-    options.writePlan ??
-    (async (content: string) => {
-      sequence.push('write')
-      writtenPlans.push(content)
+  const createdPaths: string[] = []
+  const verifiedPaths: string[] = []
+  const createPlanFile =
+    options.createPlanFile ??
+    (async () => {
+      sequence.push('create-file')
+      createdPaths.push('/tmp/pi-cutover-test/plan.md')
       return '/tmp/pi-cutover-test/plan.md'
+    })
+  const verifyPlan =
+    options.verifyPlan ??
+    (async (path: string) => {
+      sequence.push('verify')
+      verifiedPaths.push(path)
     })
 
   const pi = {
+    on(event: string, handler: AgentSettledHandler) {
+      if (event === 'agent_settled') agentSettled = handler
+    },
     registerCommand(
       name: string,
       command: { description?: string; handler: CommandHandler }
@@ -85,8 +76,12 @@ function createHarness(options: HarnessOptions = {}) {
       commands.set(name, command)
     },
     sendUserMessage(content: string) {
-      if (options.sendError) throw options.sendError
+      sendCall += 1
+      sequence.push('send')
+      const error = options.sendError?.(content, sendCall)
+      if (error) throw error
       sentMessages.push(content)
+      idle = false
     }
   } as unknown as ExtensionAPI
 
@@ -100,11 +95,7 @@ function createHarness(options: HarnessOptions = {}) {
     },
     sessionManager: {
       getBranch() {
-        sequence.push('branch')
-        return branch
-      },
-      getEntries() {
-        throw new Error('Cutover must only inspect the active branch')
+        throw new Error('Cutover must not inspect session messages')
       }
     },
     ui: {
@@ -115,12 +106,11 @@ function createHarness(options: HarnessOptions = {}) {
     async waitForIdle() {
       sequence.push('wait')
       await options.waitForIdle?.()
-      branch = options.branchAfterWait ?? branch
       idle = true
     }
   } as unknown as ExtensionCommandContext
 
-  createCutover({ writePlan })(pi)
+  createCutover({ createPlanFile, verifyPlan })(pi)
 
   return {
     commands,
@@ -128,7 +118,8 @@ function createHarness(options: HarnessOptions = {}) {
     notifications,
     sentMessages,
     sequence,
-    writtenPlans,
+    createdPaths,
+    verifiedPaths,
     get compactOptions() {
       return compactOptions
     },
@@ -137,71 +128,21 @@ function createHarness(options: HarnessOptions = {}) {
       if (!command) throw new Error('/cutover was not registered')
       await command.handler(args, context)
     },
-    setBranch(value: SessionEntry[]) {
-      branch = value
+    async settle() {
+      sequence.push('settle')
+      idle = true
+      await agentSettled?.({}, context)
     }
   }
 }
 
-describe('assistant plan selection', () => {
-  it('uses the latest assistant response on the active branch', () => {
-    const branch = [
-      assistantEntry([{ type: 'text', text: 'old plan' }], 'old'),
-      messageEntry('user', 'revise it'),
-      assistantEntry(
-        [
-          { type: 'thinking', thinking: 'private reasoning' },
-          { type: 'text', text: '  # Final plan' },
-          {
-            type: 'toolCall',
-            id: 'call-1',
-            name: 'read',
-            arguments: {}
-          },
-          { type: 'text', text: 'Step one.  ' }
-        ],
-        'latest'
-      )
-    ]
-
-    expect(latestAssistantText(branch)).toBe('# Final plan\nStep one.')
-  })
-
-  it('does not fall back when the latest assistant response has no text', () => {
-    const branch = [
-      assistantEntry([{ type: 'text', text: 'older plan' }], 'old'),
-      assistantEntry(
-        [
-          {
-            type: 'toolCall',
-            id: 'call-1',
-            name: 'read',
-            arguments: {}
-          }
-        ],
-        'latest'
-      )
-    ]
-
-    expect(() => latestAssistantText(branch)).toThrow(
-      'The latest assistant response has no text to save.'
-    )
-  })
-
-  it('reports a branch with no assistant response', () => {
-    expect(() =>
-      latestAssistantText([messageEntry('user', 'make a plan')])
-    ).toThrow('The current session branch has no assistant response.')
-  })
-})
-
-describe('temporary plan writer', () => {
-  it('writes normalized Markdown to unique OS temporary directories', async () => {
+describe('temporary plan file', () => {
+  it('creates unique empty Markdown files in OS temporary directories', async () => {
     const paths: string[] = []
 
     try {
-      paths.push(await writeTemporaryPlan('\n\n# Plan\n\nStep one.  \n'))
-      paths.push(await writeTemporaryPlan('# Another plan'))
+      paths.push(await createTemporaryPlanFile())
+      paths.push(await createTemporaryPlanFile())
 
       expect(paths[0]).not.toBe(paths[1])
       for (const path of paths) {
@@ -209,14 +150,36 @@ describe('temporary plan writer', () => {
         expect(dirname(path)).toMatch(
           new RegExp(`^${escapeRegExp(join(tmpdir(), 'pi-cutover-'))}`)
         )
+        expect(await readFile(path, 'utf8')).toBe('')
       }
-      expect(await readFile(paths[0]!, 'utf8')).toBe('# Plan\n\nStep one.\n')
-      expect(await readFile(paths[1]!, 'utf8')).toBe('# Another plan\n')
     } finally {
       await Promise.all(
         paths.map((path) => rm(dirname(path), { recursive: true, force: true }))
       )
     }
+  })
+
+  it('verifies that the agent replaced the empty file with a plan', async () => {
+    const planPath = await createTemporaryPlanFile()
+
+    try {
+      await expect(verifyPlanWritten(planPath)).rejects.toThrow(
+        `The agent did not write a plan to ${planPath}`
+      )
+
+      await writeFile(planPath, '# Plan\n', 'utf8')
+      await expect(verifyPlanWritten(planPath)).resolves.toBeUndefined()
+    } finally {
+      await rm(dirname(planPath), { recursive: true, force: true })
+    }
+  })
+})
+
+describe('plan request', () => {
+  it('asks the agent to overwrite the known file without returning its path', () => {
+    expect(planRequest('/tmp/cutover/plan.md')).toBe(
+      'Write a complete implementation plan for the work we have been discussing to /tmp/cutover/plan.md. The empty file has already been created for you. Use your file-writing tools to replace its contents with the plan. Do not implement the plan yet. Once the plan has been written, stop.'
+    )
   })
 })
 
@@ -228,41 +191,53 @@ describe('/cutover', () => {
       [
         'cutover',
         expect.objectContaining({
-          description: 'Save the latest plan, compact, and start implementation'
+          description: 'Write a plan to a temp file, compact, and implement it'
         })
       ]
     ])
   })
 
-  it('waits, reads the active branch, writes, and then compacts', async () => {
-    const harness = createHarness({
-      branch: [assistantEntry([{ type: 'text', text: '# Plan' }])]
-    })
+  it('creates a file, asks the agent to write it, then verifies and compacts', async () => {
+    const harness = createHarness()
 
     await harness.run()
 
-    expect(harness.sequence).toEqual(['wait', 'branch', 'write', 'compact'])
-    expect(harness.writtenPlans).toEqual(['# Plan'])
-    expect(harness.sentMessages).toEqual([])
-    expect(harness.notifications).toContainEqual({
-      message:
-        'Saved the plan to /tmp/pi-cutover-test/plan.md. Compacting the session…',
-      type: 'info'
-    })
+    expect(harness.sequence).toEqual(['wait', 'create-file', 'send'])
+    expect(harness.sentMessages).toEqual([
+      planRequest('/tmp/pi-cutover-test/plan.md')
+    ])
+    expect(harness.compactOptions).toBeUndefined()
+
+    await harness.settle()
+
+    expect(harness.sequence).toEqual([
+      'wait',
+      'create-file',
+      'send',
+      'settle',
+      'verify',
+      'compact'
+    ])
+    expect(harness.createdPaths).toEqual(['/tmp/pi-cutover-test/plan.md'])
+    expect(harness.verifiedPaths).toEqual(['/tmp/pi-cutover-test/plan.md'])
   })
 
-  it('snapshots the completed response only after a busy agent becomes idle', async () => {
-    const harness = createHarness({
-      idle: false,
-      branch: [assistantEntry([{ type: 'text', text: 'partial' }])],
-      branchAfterWait: [
-        assistantEntry([{ type: 'text', text: '# Completed plan' }])
-      ]
-    })
+  it('never inspects the planning response', async () => {
+    const harness = createHarness()
+
+    await harness.run()
+    await harness.settle()
+
+    expect(harness.sequence).not.toContain('branch')
+    expect(harness.compactOptions).toBeDefined()
+  })
+
+  it('waits for a busy turn before asking for the plan', async () => {
+    const harness = createHarness({ idle: false })
 
     await harness.run()
 
-    expect(harness.writtenPlans).toEqual(['# Completed plan'])
+    expect(harness.sequence).toEqual(['wait', 'create-file', 'send'])
     expect(harness.notifications[0]).toEqual({
       message: 'Waiting for the current turn before cutting over…',
       type: 'info'
@@ -273,23 +248,23 @@ describe('/cutover', () => {
     const harness = createHarness()
 
     await harness.run()
-    expect(harness.sentMessages).toEqual([])
+    await harness.settle()
+    expect(harness.sentMessages).toEqual([
+      planRequest('/tmp/pi-cutover-test/plan.md')
+    ])
 
     harness.compactOptions?.onComplete?.({} as never)
 
     expect(harness.sentMessages).toEqual([
+      planRequest('/tmp/pi-cutover-test/plan.md'),
       'Implement the plan from /tmp/pi-cutover-test/plan.md'
     ])
   })
 
-  it('rejects another cutover while the first is waiting for idle', async () => {
-    let finishWaiting!: () => void
-    const waiting = new Promise<void>((resolve) => {
-      finishWaiting = resolve
-    })
-    const harness = createHarness({ idle: false, waitForIdle: () => waiting })
+  it('rejects another cutover while the planning turn is running', async () => {
+    const harness = createHarness()
 
-    const firstRun = harness.run()
+    await harness.run()
     await harness.run()
 
     expect(harness.notifications.at(-1)).toEqual({
@@ -297,53 +272,54 @@ describe('/cutover', () => {
       type: 'warning'
     })
     expect(harness.compactOptions).toBeUndefined()
-
-    finishWaiting()
-    await firstRun
-    expect(harness.compactOptions).toBeDefined()
   })
 
-  it('does not compact or prompt when plan selection fails', async () => {
+  it('does not compact when the planning turn cannot start', async () => {
     const harness = createHarness({
-      branch: [messageEntry('user', 'make a plan')]
+      sendError: (_content, call) =>
+        call === 1 ? new Error('session closed') : undefined
     })
 
     await harness.run()
+    await harness.settle()
 
-    expect(harness.sequence).toEqual(['wait', 'branch'])
-    expect(harness.sentMessages).toEqual([])
+    expect(harness.sequence).toEqual(['wait', 'create-file', 'send', 'settle'])
+    expect(harness.compactOptions).toBeUndefined()
     expect(harness.notifications.at(-1)).toEqual({
       message:
-        'Cutover failed: The current session branch has no assistant response.',
+        'Cutover failed: session closed. The plan file remains at /tmp/pi-cutover-test/plan.md.',
       type: 'error'
     })
   })
 
-  it('does not compact or prompt when writing fails', async () => {
+  it('does not compact when the agent leaves the plan empty', async () => {
     const harness = createHarness({
-      writePlan: async () => {
-        throw new Error('disk full')
+      verifyPlan: async (path) => {
+        throw new Error(`The agent did not write a plan to ${path}`)
       }
     })
 
     await harness.run()
+    await harness.settle()
 
-    expect(harness.sequence).toEqual(['wait', 'branch'])
-    expect(harness.compactOptions).toBeUndefined()
-    expect(harness.sentMessages).toEqual([])
+    expect(harness.sequence).not.toContain('compact')
     expect(harness.notifications.at(-1)).toEqual({
-      message: 'Cutover failed: disk full.',
+      message:
+        'Cutover failed: The agent did not write a plan to /tmp/pi-cutover-test/plan.md. The plan file remains at /tmp/pi-cutover-test/plan.md.',
       type: 'error'
     })
   })
 
-  it('keeps the saved plan and does not prompt when compaction fails', async () => {
+  it('keeps the written plan and does not implement when compaction fails', async () => {
     const harness = createHarness()
     await harness.run()
+    await harness.settle()
 
     harness.compactOptions?.onError?.(new Error('model unavailable'))
 
-    expect(harness.sentMessages).toEqual([])
+    expect(harness.sentMessages).toEqual([
+      planRequest('/tmp/pi-cutover-test/plan.md')
+    ])
     expect(harness.notifications.at(-1)).toEqual({
       message:
         'Cutover could not compact the session: model unavailable. The plan remains at /tmp/pi-cutover-test/plan.md.',
@@ -351,10 +327,11 @@ describe('/cutover', () => {
     })
   })
 
-  it('rejects another cutover until the active one completes', async () => {
+  it('rejects another cutover until compaction completes', async () => {
     const harness = createHarness()
 
     await harness.run()
+    await harness.settle()
     await harness.run()
 
     expect(harness.sequence.filter((step) => step === 'compact')).toHaveLength(
@@ -367,6 +344,7 @@ describe('/cutover', () => {
 
     harness.compactOptions?.onComplete?.({} as never)
     await harness.run()
+    await harness.settle()
 
     expect(harness.sequence.filter((step) => step === 'compact')).toHaveLength(
       2
@@ -377,8 +355,10 @@ describe('/cutover', () => {
     const harness = createHarness()
 
     await harness.run()
+    await harness.settle()
     harness.compactOptions?.onError?.(new Error('failed'))
     await harness.run()
+    await harness.settle()
 
     expect(harness.sequence.filter((step) => step === 'compact')).toHaveLength(
       2
@@ -386,11 +366,18 @@ describe('/cutover', () => {
   })
 
   it('reports implementation dispatch errors and permits retry', async () => {
-    const harness = createHarness({ sendError: new Error('session closed') })
+    const harness = createHarness({
+      sendError: (content) =>
+        content.startsWith('Implement')
+          ? new Error('session closed')
+          : undefined
+    })
 
     await harness.run()
+    await harness.settle()
     harness.compactOptions?.onComplete?.({} as never)
     await harness.run()
+    await harness.settle()
 
     expect(harness.notifications).toContainEqual({
       message:

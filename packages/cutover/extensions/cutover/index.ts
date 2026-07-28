@@ -1,13 +1,11 @@
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type {
-  ExtensionFactory,
-  SessionEntry
-} from '@earendil-works/pi-coding-agent'
+import type { ExtensionFactory } from '@earendil-works/pi-coding-agent'
 
 export interface CutoverOptions {
-  writePlan?: (content: string) => Promise<string>
+  createPlanFile?: () => Promise<string>
+  verifyPlan?: (path: string) => Promise<void>
 }
 
 function describeError(error: unknown): string {
@@ -15,47 +13,77 @@ function describeError(error: unknown): string {
   return /[.!?]$/.test(message) ? message : `${message}.`
 }
 
-export function latestAssistantText(entries: readonly SessionEntry[]): string {
-  for (let index = entries.length - 1; index >= 0; index--) {
-    const entry = entries[index]
-    if (entry?.type !== 'message' || entry.message.role !== 'assistant') {
-      continue
-    }
-
-    const text = entry.message.content
-      .filter((block) => block.type === 'text')
-      .map((block) => block.text)
-      .join('\n')
-      .trim()
-
-    if (!text) {
-      throw new Error('The latest assistant response has no text to save.')
-    }
-
-    return text
-  }
-
-  throw new Error('The current session branch has no assistant response.')
-}
-
-export async function writeTemporaryPlan(content: string): Promise<string> {
+export async function createTemporaryPlanFile(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'pi-cutover-'))
   const planPath = join(directory, 'plan.md')
-  await writeFile(planPath, `${content.trim()}\n`, {
-    encoding: 'utf8',
-    flag: 'wx'
-  })
+  await writeFile(planPath, '', { encoding: 'utf8', flag: 'wx' })
   return planPath
 }
 
+export function planRequest(path: string): string {
+  return `Write a complete implementation plan for the work we have been discussing to ${path}. The empty file has already been created for you. Use your file-writing tools to replace its contents with the plan. Do not implement the plan yet. Once the plan has been written, stop.`
+}
+
+export async function verifyPlanWritten(path: string): Promise<void> {
+  const content = await readFile(path, 'utf8')
+  if (!content.trim()) {
+    throw new Error(`The agent did not write a plan to ${path}`)
+  }
+}
+
 export function createCutover(options: CutoverOptions = {}): ExtensionFactory {
-  const writePlan = options.writePlan ?? writeTemporaryPlan
+  const createPlanFile = options.createPlanFile ?? createTemporaryPlanFile
+  const verifyPlan = options.verifyPlan ?? verifyPlanWritten
 
   return (pi) => {
     let inProgress = false
+    let pendingPlanPath: string | undefined
+
+    pi.on('agent_settled', async (_event, ctx) => {
+      if (!pendingPlanPath) return
+
+      const planPath = pendingPlanPath
+      pendingPlanPath = undefined
+
+      try {
+        await verifyPlan(planPath)
+        ctx.ui.notify(
+          `Plan written to ${planPath}. Compacting the session…`,
+          'info'
+        )
+
+        ctx.compact({
+          onComplete: () => {
+            try {
+              pi.sendUserMessage(`Implement the plan from ${planPath}`)
+            } catch (error) {
+              ctx.ui.notify(
+                `Compaction completed, but implementation could not start: ${describeError(error)} The plan remains at ${planPath}.`,
+                'error'
+              )
+            } finally {
+              inProgress = false
+            }
+          },
+          onError: (error) => {
+            inProgress = false
+            ctx.ui.notify(
+              `Cutover could not compact the session: ${describeError(error)} The plan remains at ${planPath}.`,
+              'error'
+            )
+          }
+        })
+      } catch (error) {
+        inProgress = false
+        ctx.ui.notify(
+          `Cutover failed: ${describeError(error)} The plan file remains at ${planPath}.`,
+          'error'
+        )
+      }
+    })
 
     pi.registerCommand('cutover', {
-      description: 'Save the latest plan, compact, and start implementation',
+      description: 'Write a plan to a temp file, compact, and implement it',
       handler: async (args, ctx) => {
         if (args.trim()) {
           ctx.ui.notify('Usage: /cutover', 'warning')
@@ -79,40 +107,21 @@ export function createCutover(options: CutoverOptions = {}): ExtensionFactory {
           }
           await ctx.waitForIdle()
 
-          const plan = latestAssistantText(ctx.sessionManager.getBranch())
-          planPath = await writePlan(plan)
-          const savedPlanPath = planPath
+          planPath = await createPlanFile()
+          pendingPlanPath = planPath
+          pi.sendUserMessage(planRequest(planPath))
           ctx.ui.notify(
-            `Saved the plan to ${savedPlanPath}. Compacting the session…`,
+            `Asked the agent to write the plan to ${planPath}.`,
             'info'
           )
-
-          ctx.compact({
-            onComplete: () => {
-              try {
-                pi.sendUserMessage(`Implement the plan from ${savedPlanPath}`)
-              } catch (error) {
-                ctx.ui.notify(
-                  `Compaction completed, but implementation could not start: ${describeError(error)} The plan remains at ${savedPlanPath}.`,
-                  'error'
-                )
-              } finally {
-                inProgress = false
-              }
-            },
-            onError: (error) => {
-              inProgress = false
-              ctx.ui.notify(
-                `Cutover could not compact the session: ${describeError(error)} The plan remains at ${savedPlanPath}.`,
-                'error'
-              )
-            }
-          })
         } catch (error) {
+          pendingPlanPath = undefined
           inProgress = false
-          const savedPlan = planPath ? ` The plan remains at ${planPath}.` : ''
+          const createdFile = planPath
+            ? ` The plan file remains at ${planPath}.`
+            : ''
           ctx.ui.notify(
-            `Cutover failed: ${describeError(error)}${savedPlan}`,
+            `Cutover failed: ${describeError(error)}${createdFile}`,
             'error'
           )
         }
