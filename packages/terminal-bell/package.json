@@ -1,6 +1,6 @@
 {
   "name": "@noice-tech/pi-terminal-bell",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Terminal bell notifications when Pi is ready.",
   "type": "module",
   "license": "MIT",
