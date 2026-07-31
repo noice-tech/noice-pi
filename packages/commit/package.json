@@ -1,7 +1,7 @@
 {
   "name": "pi-commit",
   "version": "1.2.1",
-  "description": "Commit, push, and open PRs from an isolated Pi session branch—keeping coding context clean while preserving the full worker transcript.",
+  "description": "Commit, push, and open pull requests without interrupting your Pi session.",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -9,9 +9,10 @@
     "pi",
     "commit",
     "git",
+    "github",
     "pull-request",
     "stacked-pr",
-    "changelog"
+    "coding-agent"
   ],
   "files": [
     "extensions/**/*.ts",

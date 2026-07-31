@@ -1,7 +1,7 @@
 {
   "name": "@noice-tech/pi-cutover",
   "version": "1.2.1",
-  "description": "Ask Pi to write a plan, compact the session, and start implementation in one command.",
+  "description": "Turn a Pi planning session into a clean implementation handoff with one command.",
   "type": "module",
   "license": "MIT",
   "keywords": [

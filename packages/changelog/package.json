@@ -1,7 +1,7 @@
 {
   "name": "@noice-tech/pi-changelog",
   "version": "1.2.1",
-  "description": "Pi workflows for changelog previews and privacy-safe public release notes.",
+  "description": "Preview unreleased changes and write privacy-safe release notes in Pi.",
   "type": "module",
   "license": "MIT",
   "keywords": [
