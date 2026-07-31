@@ -73,6 +73,18 @@ test('prose turn branches from and returns to the active conversation', async ()
   const navigated = []
   let leaf = 'source-leaf'
   let toolBlock
+  let streamedContent
+  const proseJson = JSON.stringify({
+    stageChangeIds: [],
+    ignoreChangeIds: [],
+    commitType: 'internal',
+    commitMessage: 'internal: reuse conversation context',
+    prType: 'internal',
+    prHeadline: 'reuse conversation context',
+    summary: ['Reuse the active conversation.'],
+    publicSummary: 'None.',
+    context: ['Preserves the provider prompt cache.']
+  })
   const branch = [
     {
       id: 'source-leaf',
@@ -115,25 +127,27 @@ test('prose turn branches from and returns to the active conversation', async ()
           message: {
             role: 'assistant',
             stopReason: 'stop',
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({
-                  stageChangeIds: [],
-                  ignoreChangeIds: [],
-                  commitType: 'internal',
-                  commitMessage: 'internal: reuse conversation context',
-                  prType: 'internal',
-                  prHeadline: 'reuse conversation context',
-                  summary: ['Reuse the active conversation.'],
-                  publicSummary: 'None.',
-                  context: ['Preserves the provider prompt cache.']
-                })
-              }
-            ]
+            content: [{ type: 'text', text: proseJson }]
           }
         }
       )
+      streamedContent = [{ type: 'text', text: proseJson }]
+      const streamedMessage = {
+        role: 'assistant',
+        stopReason: 'stop',
+        content: streamedContent
+      }
+      handlers.get('message_start')?.({ message: streamedMessage })
+      handlers.get('message_update')?.({
+        message: streamedMessage,
+        assistantMessageEvent: {
+          type: 'text_end',
+          contentIndex: 0,
+          content: proseJson,
+          partial: streamedMessage
+        }
+      })
+      handlers.get('message_end')?.({ message: streamedMessage })
       queueMicrotask(() => handlers.get('agent_settled')?.({}))
     }
   }
@@ -179,6 +193,7 @@ test('prose turn branches from and returns to the active conversation', async ()
     deliverAs: 'followUp'
   })
   assert.equal(sent[0].message.display, false)
+  assert.equal(streamedContent[0].text, '')
   assert.equal(toolBlock.block, true)
   assert.deepEqual(navigated, ['source-leaf'])
   assert.equal(
@@ -293,9 +308,10 @@ test('/commit selects immediately, waits for idle, and does not trigger an agent
   assert.equal(sentMessages.length, 1)
   assert.equal(sentMessages[0].message.customType, RESULT_MESSAGE_TYPE)
   assert.equal(sentMessages[0].options, undefined)
+  assert.equal(sentMessages[0].message.display, false)
   assert.match(sentMessages[0].message.content, /^status: no_changes/m)
-  assert.match(sentMessages[0].message.content, /activity:/)
-  assert.match(
+  assert.doesNotMatch(sentMessages[0].message.content, /activity:/)
+  assert.doesNotMatch(
     sentMessages[0].message.content,
     /Inspecting Git and GitHub state/
   )

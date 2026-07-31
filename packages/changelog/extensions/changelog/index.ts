@@ -48,11 +48,62 @@ let commitCommandPending = false
 let commitWorkflowRunning = false
 let commitProseRunning = false
 let proseAgentSettledWaiter: (() => void) | undefined
+let proseStreamText = new Map<number, string>()
+let proseStreamResponse:
+  | { text: string; stopReason?: string; errorMessage?: string }
+  | undefined
 
 export default function noiceChangelogExtension(pi: ExtensionAPI) {
   pi.on('agent_settled', () => {
     proseAgentSettledWaiter?.()
     proseAgentSettledWaiter = undefined
+  })
+
+  pi.on('message_start', (event) => {
+    if (!commitProseRunning || event.message.role !== 'assistant') return
+    proseStreamText = new Map()
+    proseStreamResponse = undefined
+  })
+
+  pi.on('message_update', (event) => {
+    if (!commitProseRunning || event.message.role !== 'assistant') return
+    const update = event.assistantMessageEvent
+    if (update.type === 'start') {
+      proseStreamText = new Map()
+      proseStreamResponse = undefined
+    } else if (update.type === 'text_delta') {
+      proseStreamText.set(
+        update.contentIndex,
+        `${proseStreamText.get(update.contentIndex) ?? ''}${update.delta}`
+      )
+    } else if (update.type === 'text_end') {
+      proseStreamText.set(update.contentIndex, update.content)
+    } else if (update.type === 'done') {
+      proseStreamResponse = {
+        text: joinedProseStreamText(),
+        stopReason: update.message.stopReason,
+        errorMessage: update.message.errorMessage
+      }
+    } else if (update.type === 'error') {
+      proseStreamResponse = {
+        text: joinedProseStreamText(),
+        stopReason: update.error.stopReason,
+        errorMessage: update.error.errorMessage
+      }
+    }
+
+    // The hidden turn exists only to obtain structured prose. Keep its streamed
+    // JSON out of the chat while preserving the active conversation/model call.
+    hideStreamingProse(event.message.content)
+  })
+
+  pi.on('message_end', (event) => {
+    if (!commitProseRunning || event.message.role !== 'assistant') return
+    proseStreamResponse = {
+      text: joinedProseStreamText(),
+      stopReason: event.message.stopReason,
+      errorMessage: event.message.errorMessage
+    }
   })
 
   pi.on('tool_call', () => {
@@ -163,7 +214,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
           parsed.mode
         )
         progress.finish()
-        const summary = formatWorkflowResult(workflow, progress.activity())
+        const summary = formatWorkflowResult(workflow)
         await sendResult(ctx, pi, summary, {
           changeType: parsed.changeType,
           mode: parsed.mode,
@@ -187,10 +238,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
                 verification: 'Not run',
                 notes: [message]
               }
-        const summary = formatWorkflowResult(
-          failedWorkflow,
-          progress.activity()
-        )
+        const summary = formatWorkflowResult(failedWorkflow)
         await sendResult(ctx, pi, summary, {
           changeType: parsed.changeType,
           mode: parsed.mode,
@@ -223,6 +271,8 @@ export async function generateProse(
     .replace('{{rules}}', rules)
     .replace('{{input}}', JSON.stringify(input, null, 2))
 
+  proseStreamText = new Map()
+  proseStreamResponse = undefined
   commitProseRunning = true
   try {
     const agentSettled = waitForProseAgentSettled()
@@ -246,15 +296,19 @@ export async function generateProse(
       throw new Error('The commit prose prompt was missing from the model turn')
     const assistant = findLastBranchAssistant(branch, promptIndex)
     if (!assistant) throw new Error('The model returned no commit prose')
-    if (assistant.stopReason !== 'stop') {
-      const detail = assistant.errorMessage
-        ? `: ${assistant.errorMessage.trim()}`
-        : ''
+    const streamedResponse = getProseStreamResponse()
+    const stopReason = streamedResponse?.stopReason ?? assistant.stopReason
+    const errorMessage =
+      streamedResponse?.errorMessage ?? assistant.errorMessage
+    if (stopReason !== 'stop') {
+      const detail = errorMessage ? `: ${errorMessage.trim()}` : ''
       throw new Error(
-        `The model did not finish generating commit prose (stopReason: ${assistant.stopReason ?? 'unknown'})${detail}`
+        `The model did not finish generating commit prose (stopReason: ${stopReason ?? 'unknown'})${detail}`
       )
     }
-    const text = extractText(assistant.content).trim()
+    const text = (
+      streamedResponse?.text || extractText(assistant.content)
+    ).trim()
     if (!text) throw new Error('The model returned no commit prose')
     try {
       return JSON.parse(text) as unknown
@@ -270,6 +324,8 @@ export async function generateProse(
       // fails. The workflow will fail before any Git mutation if restoration
       // itself cannot be proven.
       commitProseRunning = false
+      proseStreamText = new Map()
+      proseStreamResponse = undefined
     }
   }
 }
@@ -365,7 +421,7 @@ async function sendResult(
   details: CommitResultDetails
 ) {
   if (!ctx.isIdle()) await ctx.waitForIdle()
-  pi.sendMessage({ customType: MESSAGE_TYPE, content, display: true, details })
+  pi.sendMessage({ customType: MESSAGE_TYPE, content, display: false, details })
 }
 
 interface ProgressEntry {
@@ -449,14 +505,6 @@ function createCommitProgress(
       update(`Failed: ${message.split('\n', 1)[0]}`)
       finishCurrent()
       render()
-    },
-    activity() {
-      return entries.map((entry) => {
-        const elapsed = formatElapsed(
-          (entry.finishedAt ?? Date.now()) - entry.startedAt
-        )
-        return `${entry.message} ${elapsed}`
-      })
     }
   }
 }
@@ -562,10 +610,7 @@ function isChangeType(value: string): value is ChangeType {
   return CHANGE_TYPES.includes(value as ChangeType)
 }
 
-export function formatWorkflowResult(
-  workflow: WorkflowResult,
-  activity: string[] = []
-) {
+export function formatWorkflowResult(workflow: WorkflowResult) {
   const pr = workflow.pr
     ? `#${workflow.pr.number} ${workflow.pr.title} ${workflow.pr.url}`
     : 'none'
@@ -574,10 +619,7 @@ export function formatWorkflowResult(
     `commit: ${workflow.commit ?? 'none'}`,
     `pr: ${pr}`,
     `verification: ${workflow.verification}`,
-    `notes: ${workflow.notes.length ? workflow.notes.join('; ') : 'none'}`,
-    ...(activity.length
-      ? ['', 'activity:', ...activity.map((entry) => `- ${entry}`)]
-      : [])
+    `notes: ${workflow.notes.length ? workflow.notes.join('; ') : 'none'}`
   ].join('\n')
 }
 
@@ -604,6 +646,28 @@ function formatCommitNotification(
         ? 'Commit command cancelled'
         : 'Commit workflow finished'
   return summary.trim() ? `${title}:\n${summary.trim()}` : title
+}
+
+function getProseStreamResponse() {
+  if (proseStreamResponse) return proseStreamResponse
+  const text = joinedProseStreamText()
+  return text ? { text } : undefined
+}
+
+function joinedProseStreamText() {
+  return [...proseStreamText.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, text]) => text)
+    .join('')
+}
+
+function hideStreamingProse(content: unknown) {
+  if (!Array.isArray(content)) return
+  for (const part of content) {
+    if (!part || typeof part !== 'object' || !('type' in part)) continue
+    if (part.type === 'text' && 'text' in part) part.text = ''
+    if (part.type === 'thinking' && 'thinking' in part) part.thinking = ''
+  }
 }
 
 function extractText(content: unknown): string {
