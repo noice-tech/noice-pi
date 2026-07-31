@@ -56,11 +56,17 @@ export interface LocalChangesSummary {
   conflicts: number
 }
 
+export interface StackLayer {
+  position: number
+  total: number
+}
+
 interface PresentationState {
   sessionName?: string
   gitContext?: GitContext
   pullRequest?: PullRequest
   localChanges?: LocalChangesSummary
+  stackLayer?: StackLayer
 }
 
 interface HeadWatcher {
@@ -358,6 +364,37 @@ export function parsePullRequest(output: string): PullRequest | undefined {
   }
 }
 
+export function parseStackLayer(output: string): StackLayer | undefined {
+  try {
+    const value: unknown = JSON.parse(output)
+    if (!isRecord(value) || !Array.isArray(value.branches)) return undefined
+
+    const branches = value.branches
+    if (branches.length === 0) return undefined
+
+    let currentIndex = -1
+    for (let index = 0; index < branches.length; index += 1) {
+      const branch = branches[index]
+      if (
+        !isRecord(branch) ||
+        typeof branch.name !== 'string' ||
+        !branch.name.trim() ||
+        typeof branch.isCurrent !== 'boolean'
+      ) {
+        return undefined
+      }
+      if (!branch.isCurrent) continue
+      if (currentIndex !== -1) return undefined
+      currentIndex = index
+    }
+
+    if (currentIndex === -1) return undefined
+    return { position: currentIndex + 1, total: branches.length }
+  } catch {
+    return undefined
+  }
+}
+
 function titleStatePrefix(pullRequest: PullRequest): string {
   if (pullRequest.state === 'MERGED') return '✓ '
   if (pullRequest.state === 'CLOSED') return '× '
@@ -474,7 +511,8 @@ export function createWorkContext(
     function presentWidget(ctx: ExtensionContext) {
       const pullRequest = state.pullRequest
       const localChanges = state.localChanges
-      if (!pullRequest && !localChanges?.changed) {
+      const stackLayer = state.stackLayer
+      if (!pullRequest && !localChanges?.changed && !stackLayer) {
         ctx.ui.setWidget(WORK_CONTEXT_RESOURCE, undefined)
         return
       }
@@ -511,6 +549,13 @@ export function createWorkContext(
               }
             }
 
+            const stack = stackLayer
+              ? `${theme.fg('dim', 'Stack')} ${theme.fg(
+                  'accent',
+                  `${stackLayer.position}/${stackLayer.total}`
+                )}`
+              : undefined
+
             let remote: string | undefined
             let remoteCompact: string | undefined
             if (pullRequest) {
@@ -531,24 +576,39 @@ export function createWorkContext(
               remoteCompact = link
             }
 
-            const candidates: string[] = []
-            if (remote && localVariants.length > 0) {
-              for (const local of localVariants) {
-                candidates.push(`${local}   ${remote}`)
+            const contextVariants: string[] = []
+            if (stack && remote) {
+              contextVariants.push(`${stack}   ${remote}`)
+              if (remoteCompact) {
+                contextVariants.push(`${stack}   ${remoteCompact}`)
               }
-              if (localChanges?.conflicts && remoteCompact) {
-                candidates.push(
-                  `${localVariants.at(-1)}   ${remoteCompact}`,
-                  localVariants.at(-1) ?? remote
-                )
-              } else {
-                candidates.push(remote)
-                if (remoteCompact) candidates.push(remoteCompact)
-                candidates.push(localVariants.at(-1) ?? remote)
-              }
+              contextVariants.push(stack, remote)
+              if (remoteCompact) contextVariants.push(remoteCompact)
+            } else if (stack) {
+              contextVariants.push(stack)
             } else if (remote) {
-              candidates.push(remote)
-              if (remoteCompact) candidates.push(remoteCompact)
+              contextVariants.push(remote)
+              if (remoteCompact) contextVariants.push(remoteCompact)
+            }
+
+            const candidates: string[] = []
+            const fullContext = contextVariants[0]
+            if (fullContext && localVariants.length > 0) {
+              for (const local of localVariants) {
+                candidates.push(`${local}   ${fullContext}`)
+              }
+
+              const smallestLocal = localVariants.at(-1) ?? fullContext
+              if (localChanges?.conflicts) {
+                for (const context of contextVariants.slice(1)) {
+                  candidates.push(`${smallestLocal}   ${context}`)
+                }
+                candidates.push(smallestLocal)
+              } else {
+                candidates.push(...contextVariants, smallestLocal)
+              }
+            } else if (fullContext) {
+              candidates.push(...contextVariants)
             } else {
               candidates.push(...localVariants)
             }
@@ -668,7 +728,8 @@ export function createWorkContext(
               state = {
                 ...state,
                 pullRequest: undefined,
-                localChanges: undefined
+                localChanges: undefined,
+                stackLayer: undefined
               }
               present(ctx)
               requestRefresh(ctx)
@@ -750,6 +811,20 @@ export function createWorkContext(
       }
     }
 
+    async function findStackLayer(
+      root: string
+    ): Promise<StackLayer | undefined> {
+      try {
+        const result = await pi.exec('gh', ['stack', 'view', '--json'], {
+          cwd: root,
+          timeout: commandTimeoutMs
+        })
+        return result.code === 0 ? parseStackLayer(result.stdout) : undefined
+      } catch {
+        return undefined
+      }
+    }
+
     async function refresh(
       ctx: ExtensionContext,
       expectedGeneration: number,
@@ -764,7 +839,8 @@ export function createWorkContext(
           sessionName: state.sessionName,
           gitContext: undefined,
           pullRequest: undefined,
-          localChanges: undefined
+          localChanges: undefined,
+          stackLayer: undefined
         }
         present(ctx)
         return
@@ -778,7 +854,8 @@ export function createWorkContext(
         ...state,
         gitContext,
         pullRequest: changedRoot ? undefined : state.pullRequest,
-        localChanges: changedRoot ? undefined : state.localChanges
+        localChanges: changedRoot ? undefined : state.localChanges,
+        stackLayer: changedRoot ? undefined : state.stackLayer
       }
       watchGitHead(ctx, gitContext.gitDir)
       present(ctx)
@@ -793,6 +870,11 @@ export function createWorkContext(
           if (!isCurrent(expectedGeneration, expectedBranchRevision)) return
           if (pullRequest) observeCi(ctx, gitContext.root, pullRequest)
           state = { ...state, gitContext, pullRequest }
+          present(ctx)
+        }),
+        findStackLayer(gitContext.root).then((stackLayer) => {
+          if (!isCurrent(expectedGeneration, expectedBranchRevision)) return
+          state = { ...state, gitContext, stackLayer }
           present(ctx)
         })
       ])

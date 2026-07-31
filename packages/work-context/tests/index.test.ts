@@ -17,6 +17,7 @@ import {
   parseGitContext,
   parseLocalChanges,
   parsePullRequest,
+  parseStackLayer,
   summarizeChecks,
   type PullRequest,
   type WorkContextSettings,
@@ -87,6 +88,21 @@ function pullRequest(overrides: Partial<PullRequest> = {}): PullRequest {
   }
 }
 
+function stackJson(currentIndex = 1, total = 4): string {
+  return JSON.stringify({
+    trunk: 'main',
+    currentBranch: `layer-${currentIndex + 1}`,
+    branches: Array.from({ length: total }, (_, index) => ({
+      name: `layer-${index + 1}`,
+      isCurrent: index === currentIndex,
+      isMerged: false,
+      isQueued: false,
+      needsRebase: false,
+      extraPreviewField: index
+    }))
+  })
+}
+
 async function flushBackground() {
   for (let index = 0; index < 12; index += 1) {
     await Promise.resolve()
@@ -98,6 +114,7 @@ interface HarnessOptions {
   gitOutput?: string
   statusOutput?: string
   ghOutput?: string
+  stackOutput?: string
   pollIntervalMs?: number
   mode?: ExtensionContext['mode']
   ciCompletionBell?: boolean
@@ -113,6 +130,7 @@ function createHarness(options: HarnessOptions = {}) {
   let gitOutput = 'gitOutput' in options ? options.gitOutput : GIT_OUTPUT
   let statusOutput = 'statusOutput' in options ? options.statusOutput : ''
   let ghOutput = 'ghOutput' in options ? options.ghOutput : pullRequestJson()
+  let stackOutput = 'stackOutput' in options ? options.stackOutput : undefined
   let widgetContent: unknown
   let headChange: (() => void) | undefined
   let watcherError: (() => void) | undefined
@@ -142,7 +160,9 @@ function createHarness(options: HarnessOptions = {}) {
   const exec = vi.fn(async (command: string, args: string[]) => {
     const output =
       command === 'gh'
-        ? ghOutput
+        ? args[0] === 'stack'
+          ? stackOutput
+          : ghOutput
         : args.includes('status')
           ? statusOutput
           : gitOutput
@@ -253,6 +273,9 @@ function createHarness(options: HarnessOptions = {}) {
     },
     setGhOutput(output: string | undefined) {
       ghOutput = output
+    },
+    setStackOutput(output: string | undefined) {
+      stackOutput = output
     },
     setGitOutput(output: string | undefined) {
       gitOutput = output
@@ -402,6 +425,47 @@ describe('local Git status parsing', () => {
   })
 })
 
+describe('local gh-stack parsing', () => {
+  it.each([
+    [0, { position: 1, total: 4 }],
+    [1, { position: 2, total: 4 }],
+    [3, { position: 4, total: 4 }]
+  ])('derives a 1-based layer for branch index %i', (currentIndex, layer) => {
+    expect(parseStackLayer(stackJson(currentIndex))).toEqual(layer)
+  })
+
+  it('tolerates unknown preview fields', () => {
+    expect(
+      parseStackLayer(
+        JSON.stringify({
+          trunk: 'main',
+          futureRootField: true,
+          branches: [
+            { name: 'one', isCurrent: true, pullRequest: { number: 12 } }
+          ]
+        })
+      )
+    ).toEqual({ position: 1, total: 1 })
+  })
+
+  it.each([
+    '{broken',
+    'null',
+    '[]',
+    '{}',
+    '{"branches":{}}',
+    '{"branches":[]}',
+    '{"branches":[null]}',
+    '{"branches":[{"name":"","isCurrent":true}]}',
+    '{"branches":[{"name":"one"}]}',
+    '{"branches":[{"name":"one","isCurrent":"yes"}]}',
+    '{"branches":[{"name":"one","isCurrent":false}]}',
+    '{"branches":[{"name":"one","isCurrent":true},{"name":"two","isCurrent":true}]}'
+  ])('rejects invalid or non-layer output: %s', (output) => {
+    expect(parseStackLayer(output)).toBeUndefined()
+  })
+})
+
 describe('GitHub check aggregation', () => {
   it('aggregates check runs and status contexts', () => {
     expect(
@@ -537,6 +601,15 @@ describe('work-context extension behavior', () => {
         timeout: 5_000
       }
     )
+    expect(harness.exec).toHaveBeenNthCalledWith(
+      4,
+      'gh',
+      ['stack', 'view', '--json'],
+      {
+        cwd: '/projects/worktrees/repo/work-context/repo',
+        timeout: 5_000
+      }
+    )
     expect(harness.titles.at(-1)).toBe(
       '#6 — Add searchable GitHub issue planning · PR #42'
     )
@@ -565,7 +638,7 @@ describe('work-context extension behavior', () => {
     const harness = createHarness()
     await harness.emit('session_start', { reason: 'resume' })
     await flushBackground()
-    expect(harness.exec).toHaveBeenCalledTimes(3)
+    expect(harness.exec).toHaveBeenCalledTimes(4)
 
     await harness.emit('session_info_changed', {
       name: '#6 — Add searchable GitHub issue planning'
@@ -574,7 +647,7 @@ describe('work-context extension behavior', () => {
     expect(harness.titles.at(-1)).toBe(
       '#6 — Add searchable GitHub issue planning · PR #42'
     )
-    expect(harness.exec).toHaveBeenCalledTimes(3)
+    expect(harness.exec).toHaveBeenCalledTimes(4)
   })
 
   it.each(['rpc', 'json', 'print'] satisfies ExtensionContext['mode'][])(
@@ -907,6 +980,68 @@ describe('work-context extension behavior', () => {
     expect(harness.widgetContent).toBeUndefined()
   })
 
+  it('shows a local stack layer without a PR or local changes and leaves the title unchanged', async () => {
+    const harness = createHarness({
+      ghOutput: undefined,
+      stackOutput: stackJson(1)
+    })
+    await harness.emit('session_start', { reason: 'startup' })
+    await flushBackground()
+
+    expect(harness.titles.at(-1)).toBe('work-context')
+    expect(harness.renderWidget()?.[0]).toContain('Stack 2/4')
+    for (const width of [0, 1, 5, 9]) {
+      expect(
+        visibleWidth(harness.renderWidget(width)?.[0] ?? '')
+      ).toBeLessThanOrEqual(width)
+    }
+  })
+
+  it('combines changes, stack, PR, and CI while retaining compact stack and PR context', async () => {
+    const harness = createHarness({
+      stackOutput: stackJson(1),
+      statusOutput: porcelain(ordinary('changed.ts'))
+    })
+    await harness.emit('session_start', { reason: 'startup' })
+    await flushBackground()
+
+    const line = harness.renderWidget()?.[0] ?? ''
+    expect(line).toContain('Change 1')
+    expect(line).toContain('Stack 2/4')
+    expect(line).toContain('PR ●')
+    expect(line).toContain('CI ✓ 2/2')
+    expect(line.indexOf('Change 1')).toBeLessThan(line.indexOf('Stack 2/4'))
+    expect(line.indexOf('Stack 2/4')).toBeLessThan(line.indexOf('PR ●'))
+
+    const compact = harness.renderWidget(17)?.[0] ?? ''
+    expect(compact).toContain('Stack 2/4')
+    expect(compact).toContain('#42 ↗')
+    expect(visibleWidth(compact)).toBeLessThanOrEqual(17)
+    expect(compact).toMatch(/\u001b\]8;;\u001b\\$/)
+  })
+
+  it.each([
+    ['malformed output', '{broken'],
+    [
+      'the checked-out trunk',
+      JSON.stringify({
+        trunk: 'main',
+        currentBranch: 'main',
+        branches: [{ name: 'layer-one', isCurrent: false }]
+      })
+    ]
+  ])(
+    'ignores %s from successful stack discovery',
+    async (_label, stackOutput) => {
+      const harness = createHarness({ ghOutput: undefined, stackOutput })
+      await harness.emit('session_start', { reason: 'startup' })
+      await flushBackground()
+
+      expect(harness.widgetContent).toBeUndefined()
+      expect(harness.titles.at(-1)).toBe('work-context')
+    }
+  )
+
   it('uses singular wording for one changed and untracked file', async () => {
     const harness = createHarness({
       ghOutput: undefined,
@@ -1044,9 +1179,9 @@ describe('work-context extension behavior', () => {
     const firstGh = new Promise<void>((resolve) => {
       finishFirstGh = resolve
     })
-    let ghCalls = 0
+    let prCalls = 0
     const harness = createHarness({ pollIntervalMs: 1_000 })
-    harness.exec.mockImplementation(async (command: string) => {
+    harness.exec.mockImplementation(async (command: string, args: string[]) => {
       if (command === 'git') {
         return {
           code: 0,
@@ -1055,9 +1190,12 @@ describe('work-context extension behavior', () => {
           killed: false
         }
       }
+      if (args[0] === 'stack') {
+        return { code: 1, stdout: '', stderr: 'unavailable', killed: false }
+      }
 
-      ghCalls += 1
-      if (ghCalls === 1) await firstGh
+      prCalls += 1
+      if (prCalls === 1) await firstGh
       return {
         code: 0,
         stdout: pullRequestJson(),
@@ -1068,20 +1206,22 @@ describe('work-context extension behavior', () => {
 
     await harness.emit('session_start', { reason: 'startup' })
     await flushBackground()
-    expect(ghCalls).toBe(1)
+    expect(prCalls).toBe(1)
 
     await vi.advanceTimersByTimeAsync(5_000)
-    expect(ghCalls).toBe(1)
+    expect(prCalls).toBe(1)
 
     finishFirstGh?.()
     await flushBackground()
-    expect(ghCalls).toBe(2)
+    expect(prCalls).toBe(2)
     expect(harness.exec.mock.calls.map(([command]) => command)).toEqual([
       'git',
       'git',
       'gh',
+      'gh',
       'git',
       'git',
+      'gh',
       'gh'
     ])
 
@@ -1094,9 +1234,9 @@ describe('work-context extension behavior', () => {
     const staleGh = new Promise<void>((resolve) => {
       finishStaleGh = resolve
     })
-    let ghCalls = 0
+    let prCalls = 0
     const harness = createHarness({ ciCompletionBell: true })
-    harness.exec.mockImplementation(async (command: string) => {
+    harness.exec.mockImplementation(async (command: string, args: string[]) => {
       if (command === 'git') {
         return {
           code: 0,
@@ -1105,9 +1245,12 @@ describe('work-context extension behavior', () => {
           killed: false
         }
       }
+      if (args[0] === 'stack') {
+        return { code: 1, stdout: '', stderr: 'unavailable', killed: false }
+      }
 
-      ghCalls += 1
-      if (ghCalls === 2) {
+      prCalls += 1
+      if (prCalls === 2) {
         await staleGh
         return {
           code: 0,
@@ -1117,9 +1260,9 @@ describe('work-context extension behavior', () => {
         }
       }
       return {
-        code: ghCalls === 3 ? 1 : 0,
+        code: prCalls === 3 ? 1 : 0,
         stdout:
-          ghCalls === 3 ? '' : pullRequestJson({ statusCheckRollup: null }),
+          prCalls === 3 ? '' : pullRequestJson({ statusCheckRollup: null }),
         stderr: '',
         killed: false
       }
@@ -1131,7 +1274,7 @@ describe('work-context extension behavior', () => {
 
     await harness.emit('agent_settled')
     await flushBackground()
-    expect(ghCalls).toBe(2)
+    expect(prCalls).toBe(2)
     harness.headChange()
     await vi.advanceTimersByTimeAsync(100)
     expect(harness.titles.at(-1)).toBe('work-context')
@@ -1139,10 +1282,69 @@ describe('work-context extension behavior', () => {
     finishStaleGh?.()
     await flushBackground()
 
-    expect(ghCalls).toBe(3)
+    expect(prCalls).toBe(3)
     expect(harness.titles).not.toContain('✓ #42 — Ship work context')
     expect(harness.titles.at(-1)).toBe('work-context')
     expect(harness.writes).toEqual([])
+  })
+
+  it('rejects an in-flight stack result after HEAD changes and shows the new layer', async () => {
+    vi.useFakeTimers()
+    let finishStaleStack: (() => void) | undefined
+    const staleStack = new Promise<void>((resolve) => {
+      finishStaleStack = resolve
+    })
+    let stackCalls = 0
+    const harness = createHarness({ ghOutput: undefined })
+    harness.exec.mockImplementation(async (command: string, args: string[]) => {
+      if (command === 'git') {
+        return {
+          code: 0,
+          stdout: args.includes('status') ? '' : GIT_OUTPUT,
+          stderr: '',
+          killed: false
+        }
+      }
+      if (args[0] === 'pr') {
+        return { code: 1, stdout: '', stderr: 'unavailable', killed: false }
+      }
+
+      stackCalls += 1
+      if (stackCalls === 2) {
+        await staleStack
+        return {
+          code: 0,
+          stdout: stackJson(2),
+          stderr: '',
+          killed: false
+        }
+      }
+      return {
+        code: 0,
+        stdout: stackCalls === 1 ? stackJson(1) : stackJson(0, 2),
+        stderr: '',
+        killed: false
+      }
+    })
+
+    await harness.emit('session_start', { reason: 'startup' })
+    await flushBackground()
+    expect(harness.renderWidget()?.[0]).toContain('Stack 2/4')
+
+    await harness.emit('agent_settled')
+    await flushBackground()
+    expect(stackCalls).toBe(2)
+
+    harness.headChange()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(harness.widgetContent).toBeUndefined()
+
+    finishStaleStack?.()
+    await flushBackground()
+
+    expect(stackCalls).toBe(3)
+    expect(harness.renderWidget()?.[0]).toContain('Stack 1/2')
+    expect(harness.renderWidget()?.[0]).not.toContain('Stack 3/4')
   })
 
   it('rejects an in-flight local status result after HEAD changes', async () => {
@@ -1199,18 +1401,21 @@ describe('work-context extension behavior', () => {
     expect(harness.widgetContent).toBeUndefined()
   })
 
-  it('invalidates branch-bound PR and local data on HEAD changes and cleans up', async () => {
+  it('invalidates branch-bound PR, stack, and local data on HEAD changes and cleans up', async () => {
     vi.useFakeTimers()
     const harness = createHarness({
       pollIntervalMs: 1_000,
-      statusOutput: porcelain(ordinary('changed.ts'))
+      statusOutput: porcelain(ordinary('changed.ts')),
+      stackOutput: stackJson(1)
     })
     await harness.emit('session_start', { reason: 'startup' })
     await flushBackground()
     expect(harness.titles.at(-1)).toBe('#42 — Ship work context')
     expect(harness.renderWidget()?.[0]).toContain('Change 1')
+    expect(harness.renderWidget()?.[0]).toContain('Stack 2/4')
 
     harness.setGhOutput(undefined)
+    harness.setStackOutput(undefined)
     harness.setStatusOutput('')
     harness.headChange()
     await vi.advanceTimersByTimeAsync(100)
