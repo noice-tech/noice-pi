@@ -1,6 +1,8 @@
 # pi-commit
 
-An opinionated commit-to-PR workflow for Pi, with changelog-ready metadata and stacked pull requests. Unlike commit-message-only helpers, `pi-commit` can carry the change through commit, push, and pull request while preserving an explicit release intent.
+Commit without derailing your coding agent. `/commit` runs a dedicated worker on a separate branch of Pi's session tree, lets it inspect, commit, push, and optionally manage a pull request, then returns you to the exact point where you were working.
+
+The worker's prompt, tool calls, and result do not enter your active model context. Your coding agent does not assume that committing ended the task, so it can keep implementing and committing in a proper iterative loop. The complete commit-worker transcript remains preserved on its separate session branch whenever you want to inspect it.
 
 ## Install
 

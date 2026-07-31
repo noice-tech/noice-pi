@@ -1,7 +1,7 @@
 {
   "name": "pi-commit",
   "version": "1.2.1",
-  "description": "Opinionated commit-to-PR workflow for Pi, with changelog-ready metadata and stacked pull requests.",
+  "description": "Commit, push, and open PRs from an isolated Pi session branch—keeping coding context clean while preserving the full worker transcript.",
   "type": "module",
   "license": "MIT",
   "keywords": [

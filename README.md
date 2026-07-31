@@ -4,14 +4,14 @@ Public MIT-licensed [Pi](https://github.com/earendil-works/pi) packages from Noi
 
 ## Packages
 
-| Package                                                  | Description                                                                           |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| [`pi-commit`](packages/commit)                           | Commit, push, and optionally create changelog-ready or stacked pull requests.         |
-| [`@noice-tech/pi-changelog`](packages/changelog)         | Changelog previews and release notes, composed with the bundled `pi-commit` workflow. |
-| [`@noice-tech/pi-cutover`](packages/cutover)             | Ask Pi to write a plan, compact the session, and start implementation.                |
-| [`@noice-tech/pi-github-issues`](packages/github-issues) | Start focused planning turns from GitHub issues.                                      |
-| [`@noice-tech/pi-terminal-bell`](packages/terminal-bell) | Terminal bell notifications when Pi is ready.                                         |
-| [`@noice-tech/pi-work-context`](packages/work-context)   | Session, Git worktree, pull request, and CI context in the terminal.                  |
+| Package                                                  | Description                                                                                                          |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| [`pi-commit`](packages/commit)                           | Commit, push, and open PRs in isolated session branches; keep coding context clean and every worker log inspectable. |
+| [`@noice-tech/pi-changelog`](packages/changelog)         | Changelog previews and release notes, composed with the bundled `pi-commit` workflow.                                |
+| [`@noice-tech/pi-cutover`](packages/cutover)             | Ask Pi to write a plan, compact the session, and start implementation.                                               |
+| [`@noice-tech/pi-github-issues`](packages/github-issues) | Start focused planning turns from GitHub issues.                                                                     |
+| [`@noice-tech/pi-terminal-bell`](packages/terminal-bell) | Terminal bell notifications when Pi is ready.                                                                        |
+| [`@noice-tech/pi-work-context`](packages/work-context)   | Session, Git worktree, pull request, and CI context in the terminal.                                                 |
 
 Install the package you want from npm in the repository where you want to use it:
 

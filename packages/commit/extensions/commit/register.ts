@@ -201,7 +201,7 @@ export function registerCommit(pi: ExtensionAPI): void {
 
   pi.registerCommand('commit', {
     description:
-      'Commit and push changes, optionally creating/updating a PR or adding a stacked PR.',
+      'Commit on an isolated context branch, then push and optionally manage a PR.',
     getArgumentCompletions: (prefix) =>
       getCommitArgumentCompletions(prefix, runtime.cachedConfig),
     handler: async (args, ctx) => {
