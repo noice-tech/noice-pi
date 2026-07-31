@@ -12,12 +12,13 @@ Commit `.pi/settings.json` when collaborators should use the package too.
 
 ## Commands
 
-| Command                                                  | What it does                                                                                                        |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `/commit [auto\|feat\|fix\|improve\|internal] [summary]` | Commits and pushes the current changes, creates or updates the PR, and records its public summary.                  |
-| `/unreleased`                                            | Audits work since the latest tag as public, internal, or needing cleanup. Changes no project files or GitHub state. |
-| `/release-notes <version \| tag \| from..to>`            | Writes public release notes and a separate private source audit for a tag or range.                                 |
-| `/setup-release-notes-style [notes]`                     | Creates or refines `.pi/release-notes-style.md` with repository-specific voice and formatting.                      |
+| Command                                                          | What it does                                                                                                        |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `/commit [auto\|feat\|fix\|improve\|internal] [summary]`         | Commits and pushes the current changes, creates or updates the PR, and records its public summary.                  |
+| `/commit stacked [auto\|feat\|fix\|improve\|internal] [summary]` | Creates a child branch and PR directly above the current branch's open PR.                                          |
+| `/unreleased`                                                    | Audits work since the latest tag as public, internal, or needing cleanup. Changes no project files or GitHub state. |
+| `/release-notes <version \| tag \| from..to>`                    | Writes public release notes and a separate private source audit for a tag or range.                                 |
+| `/setup-release-notes-style [notes]`                             | Creates or refines `.pi/release-notes-style.md` with repository-specific voice and formatting.                      |
 
 ## From commit to changelog
 
@@ -42,6 +43,14 @@ The PR's `Public summary` is the canonical changelog source. Release notes fall 
 
 Commits always use `type: description`. Multi-package PR titles use `type(package): description`, or `monorepo` for cross-cutting work. Scopes never appear in public copy. See the [full rules](extensions/changelog/rules.md).
 
+## Stacked pull requests
+
+`/commit stacked` puts the current dirty work in a new child layer above the checked-out branch's open PR. The current branch must be the published, active top of its stack. Existing active layers must already be pushed and represented by correctly chained open PRs.
+
+The child commit and PR describe only the new layer. Its PR base is the parent branch, and the parent PR's title, body, and base remain unchanged. A parent that needs rebase is still accepted; the command does not run `gh stack sync` over dirty changes.
+
+Stacked mode uses the public `gh stack` commands to import or initialize tracking, add the child, and publish its linkage. A failure after the child is added can leave a local branch, commit, pushed branch, or PR behind. The worker reports that state for manual recovery and does not automatically delete or reuse it.
+
 ## Output and privacy
 
 `/release-notes 1.2.3` creates or overwrites:
@@ -53,6 +62,6 @@ Other inputs use a filesystem-safe slug derived from the argument. The public fi
 
 ## Requirements and side effects
 
-- Git and an authenticated [GitHub CLI](https://cli.github.com/) are required for `/commit`, `/unreleased`, and `/release-notes`.
-- `/commit` uses Bash and `jq`; it can create a branch, commit, push, and create or update a PR.
+- Git and an authenticated [GitHub CLI](https://cli.github.com/) are required for `/commit`, `/unreleased`, and `/release-notes`. `/commit stacked` additionally requires the [`github/gh-stack`](https://github.com/github/gh-stack) CLI extension.
+- `/commit` uses Bash and `jq`; it can create a branch, commit, push, and create or update a PR. Stacked mode also runs `gh stack checkout`, `init`, `add`, and `submit` as needed.
 - `/unreleased` fetches tags but changes no source or GitHub state. `/release-notes` overwrites its two output files.

@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 
 const CHANGE_TYPES = ['auto', 'feat', 'fix', 'improve', 'internal'] as const
 type ChangeType = (typeof CHANGE_TYPES)[number]
+type CommitMode = 'normal' | 'stacked'
 
 const CHANGE_TYPE_OPTIONS: Array<{ type: ChangeType; label: string }> = [
   {
@@ -36,6 +37,7 @@ type CommitDisplayStatus = 'ok' | 'cancelled' | 'failed'
 
 interface CommitResultDetails {
   changeType?: ChangeType
+  mode?: CommitMode
   userContext?: string
   workerLeafId?: string | null
   status?: CommitDisplayStatus
@@ -113,7 +115,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
 
       c.addChild(
         new Text(
-          `${statusLabel} ${theme.fg('toolTitle', theme.bold('commit'))}${details?.changeType ? ` ${theme.fg('accent', details.changeType)}` : ''}`,
+          `${statusLabel} ${theme.fg('toolTitle', theme.bold('commit'))}${details?.mode === 'stacked' ? ` ${theme.fg('accent', 'stacked')}` : ''}${details?.changeType ? ` ${theme.fg('accent', details.changeType)}` : ''}`,
           0,
           0
         )
@@ -152,7 +154,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
 
   pi.registerCommand('commit', {
     description:
-      'Commit changes and create/update PR. Usage: /commit <changeType> <what was done>',
+      'Commit changes and create/update PR. Use /commit stacked to add a PR above the current PR.',
     getArgumentCompletions: getCommitArgumentCompletions,
     handler: async (args, ctx) => {
       if (commitCommandPending || commitWorkerRunning) {
@@ -185,7 +187,10 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
 
       try {
         showCommitWorkerBanner(ctx)
-        ctx.ui.notify(`Starting commit worker (${parsed.changeType})`, 'info')
+        ctx.ui.notify(
+          `Starting commit worker (${parsed.mode === 'stacked' ? 'stacked ' : ''}${parsed.changeType})`,
+          'info'
+        )
 
         const agentEnd = waitForNextAgentEndAfterIdle(ctx)
         latestCommitWorkerMessages = undefined
@@ -196,6 +201,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
             display: false,
             details: {
               changeType: parsed.changeType,
+              mode: parsed.mode,
               userContext: parsed.context
             }
           },
@@ -227,6 +233,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
             display: true,
             details: {
               changeType: parsed.changeType,
+              mode: parsed.mode,
               userContext: parsed.context,
               workerLeafId,
               status: 'failed'
@@ -247,6 +254,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
             display: true,
             details: {
               changeType: parsed.changeType,
+              mode: parsed.mode,
               userContext: parsed.context,
               workerLeafId,
               status: 'cancelled'
@@ -266,6 +274,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
               display: true,
               details: {
                 changeType: parsed.changeType,
+                mode: parsed.mode,
                 userContext: parsed.context,
                 workerLeafId,
                 status: 'cancelled'
@@ -286,6 +295,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
           display: true,
           details: {
             changeType: parsed.changeType,
+            mode: parsed.mode,
             userContext: parsed.context,
             workerLeafId,
             status: displayStatus
@@ -309,6 +319,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
           display: true,
           details: {
             changeType: parsed.changeType,
+            mode: parsed.mode,
             userContext: parsed.context,
             status: 'failed'
           }
@@ -341,23 +352,57 @@ function getCommitArgumentCompletions(prefix: string) {
   const trimmedStart = prefix.trimStart()
   const leadingWhitespace = prefix.slice(0, prefix.length - trimmedStart.length)
   const [firstWord = ''] = trimmedStart.split(/\s+/)
-  const isTypingDescription = /^\S+\s/.test(trimmedStart)
+  const hasFirstSeparator = /^\S+\s/.test(trimmedStart)
 
-  if (!isTypingDescription) {
-    const matches = CHANGE_TYPE_OPTIONS.filter((option) =>
-      option.type.startsWith(firstWord)
-    )
-    return matches.length > 0
-      ? matches.map((option) => ({
-          value: `${leadingWhitespace}${option.type} `,
+  if (!hasFirstSeparator) {
+    const options = [
+      ...CHANGE_TYPE_OPTIONS.map((option) => ({
+        value: option.type,
+        label: option.label
+      })),
+      {
+        value: 'stacked',
+        label: 'stacked - Add changes above the current pull request'
+      }
+    ].filter((option) => option.value.startsWith(firstWord))
+
+    return options.length > 0
+      ? options.map((option) => ({
+          value: `${leadingWhitespace}${option.value} `,
           label: option.label
         }))
       : null
   }
 
-  if (!isChangeType(firstWord)) return null
+  if (firstWord === 'stacked') {
+    const remainder = trimmedStart.slice(firstWord.length).trimStart()
+    const [possibleType = ''] = remainder.split(/\s+/)
+    const hasTypeSeparator = /^\S+\s/.test(remainder)
 
-  const whatWasDone = trimmedStart.slice(firstWord.length).trim()
+    if (!hasTypeSeparator) {
+      const matches = CHANGE_TYPE_OPTIONS.filter((option) =>
+        option.type.startsWith(possibleType)
+      )
+      return matches.length > 0
+        ? matches.map((option) => ({
+            value: `${leadingWhitespace}stacked ${option.type} `,
+            label: option.label
+          }))
+        : null
+    }
+
+    if (!isChangeType(possibleType)) return null
+    return contextCompletion(
+      prefix,
+      remainder.slice(possibleType.length).trim()
+    )
+  }
+
+  if (!isChangeType(firstWord)) return null
+  return contextCompletion(prefix, trimmedStart.slice(firstWord.length).trim())
+}
+
+function contextCompletion(prefix: string, whatWasDone: string) {
   return [
     {
       value: prefix,
@@ -383,7 +428,11 @@ async function prepareCommit(
   }
 
   await ctx.waitForIdle()
-  const prompt = await buildWorkerPrompt(parsed.changeType, parsed.context)
+  const prompt = await buildWorkerPrompt(
+    parsed.mode,
+    parsed.changeType,
+    parsed.context
+  )
   // Prompt loading is asynchronous. Re-check idle so another user turn cannot
   // slip in between the original wait and worker startup.
   await ctx.waitForIdle()
@@ -394,12 +443,23 @@ async function prepareCommit(
 async function resolveChangeTypeAndContext(
   args: string | undefined,
   ctx: ExtensionCommandContext
-): Promise<{ changeType: ChangeType; context: string } | null> {
+): Promise<{
+  mode: CommitMode
+  changeType: ChangeType
+  context: string
+} | null> {
   const trimmedArgs = args?.trim() ?? ''
-  const [firstWord = '', ...rest] = trimmedArgs.split(/\s+/)
+  const words = trimmedArgs ? trimmedArgs.split(/\s+/) : []
+  const mode: CommitMode = words[0] === 'stacked' ? 'stacked' : 'normal'
+  const modeArgs = mode === 'stacked' ? words.slice(1) : words
+  const [possibleType = '', ...contextWords] = modeArgs
 
-  if (isChangeType(firstWord)) {
-    return { changeType: firstWord, context: rest.join(' ').trim() }
+  if (isChangeType(possibleType)) {
+    return {
+      mode,
+      changeType: possibleType,
+      context: contextWords.join(' ').trim()
+    }
   }
 
   const selected = await ctx.ui.select(
@@ -413,14 +473,22 @@ async function resolveChangeTypeAndContext(
   )
   if (!option) return null
 
-  return { changeType: option.type, context: trimmedArgs }
+  return {
+    mode,
+    changeType: option.type,
+    context: modeArgs.join(' ').trim()
+  }
 }
 
 function isChangeType(value: string): value is ChangeType {
   return CHANGE_TYPES.includes(value as ChangeType)
 }
 
-async function buildWorkerPrompt(changeType: ChangeType, userContext: string) {
+async function buildWorkerPrompt(
+  mode: CommitMode,
+  changeType: ChangeType,
+  userContext: string
+) {
   const extensionDir = dirname(fileURLToPath(import.meta.url))
   const [template, rules] = await Promise.all([
     readFile(join(extensionDir, 'worker-prompt.md'), 'utf-8'),
@@ -428,6 +496,7 @@ async function buildWorkerPrompt(changeType: ChangeType, userContext: string) {
   ])
 
   return template
+    .replaceAll('{{mode}}', mode)
     .replaceAll('{{changeType}}', changeType)
     .replaceAll('{{userContext}}', userContext || '(none)')
     .replaceAll('{{rules}}', rules)
