@@ -5,10 +5,10 @@ Preview unreleased changes and write privacy-safe release notes in Pi.
 ## Install
 
 ```bash
-pi install npm:@noice-tech/pi-changelog
+pi install -l npm:@noice-tech/pi-changelog
 ```
 
-This also installs [`pi-commit`](https://github.com/noice-tech/noice-pi/tree/main/packages/commit), providing `/commit` and `/commit-config`. Commit the resulting `.pi/settings.json` change to install both for collaborators.
+This also installs [`@noice-tech/pi-commit`](https://github.com/noice-tech/noice-pi/tree/main/packages/commit), providing `/commit` and `/commit-config`. Commit the resulting `.pi/settings.json` change to install both for collaborators.
 
 ## Commands
 
@@ -20,7 +20,7 @@ This also installs [`pi-commit`](https://github.com/noice-tech/noice-pi/tree/mai
 | `/release-notes <version \| tag \| from..to>`  | Writes public release notes and a private source audit.                       |
 | `/setup-release-notes-style [notes]`           | Configures repository-specific release-note voice and formatting.             |
 
-See the [`pi-commit` README](https://github.com/noice-tech/noice-pi/tree/main/packages/commit) for commit options, configuration, requirements, and stacked pull requests.
+See the [`@noice-tech/pi-commit` README](https://github.com/noice-tech/noice-pi/tree/main/packages/commit) for commit options, configuration, requirements, and stacked pull requests.
 
 ## Workflow
 
@@ -42,6 +42,6 @@ The public file excludes GitHub links, PR numbers, commit hashes, private URLs, 
 ## Requirements
 
 - Authenticated [GitHub CLI](https://cli.github.com/) for `/unreleased` and `/release-notes`
-- Git and any additional tools required by the selected [`pi-commit`](https://github.com/noice-tech/noice-pi/tree/main/packages/commit) mode
+- Git and any additional tools required by the selected [`@noice-tech/pi-commit`](https://github.com/noice-tech/noice-pi/tree/main/packages/commit) mode
 
 `/unreleased` fetches tags. `/release-notes` overwrites its output files. Commit commands can create branches, commits, pushes, and pull requests.

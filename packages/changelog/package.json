@@ -34,10 +34,10 @@
     "test": "node --test test/*.test.mjs && node ../../scripts/smoke-pack.mjs @noice-tech/pi-changelog packages/changelog"
   },
   "dependencies": {
-    "pi-commit": "workspace:*"
+    "@noice-tech/pi-commit": "workspace:*"
   },
   "bundledDependencies": [
-    "pi-commit"
+    "@noice-tech/pi-commit"
   ],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
@@ -45,7 +45,7 @@
   },
   "pi": {
     "extensions": [
-      "./node_modules/pi-commit/extensions/commit/index.ts"
+      "./node_modules/@noice-tech/pi-commit/extensions/commit/index.ts"
     ],
     "prompts": [
       "./prompts/*.md"

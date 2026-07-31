@@ -32,7 +32,7 @@ test('the real Pi loader registers one command set with native package compositi
   )
   const composedCommitPath = fileURLToPath(
     new URL(
-      '../../changelog/node_modules/pi-commit/extensions/commit/index.ts',
+      '../../changelog/node_modules/@noice-tech/pi-commit/extensions/commit/index.ts',
       import.meta.url
     )
   )

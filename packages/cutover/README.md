@@ -5,7 +5,7 @@ Turn a Pi planning session into a clean implementation handoff with one command.
 ## Install
 
 ```bash
-pi install npm:@noice-tech/pi-cutover
+pi install -l npm:@noice-tech/pi-cutover
 ```
 
 ## Use

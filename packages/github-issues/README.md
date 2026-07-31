@@ -5,7 +5,7 @@ Pick a GitHub issue and start a focused Pi planning session.
 ## Install
 
 ```bash
-pi install npm:@noice-tech/pi-github-issues
+pi install -l npm:@noice-tech/pi-github-issues
 ```
 
 ## Use

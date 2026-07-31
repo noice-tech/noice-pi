@@ -36,25 +36,27 @@ const packageSpecifications = {
       'package/prompts/release-notes.md',
       'package/prompts/setup-release-notes-style.md',
       'package/prompts/unreleased.md',
-      'package/node_modules/pi-commit/package.json',
-      'package/node_modules/pi-commit/README.md',
-      'package/node_modules/pi-commit/LICENSE',
-      'package/node_modules/pi-commit/extensions/commit/command.ts',
-      'package/node_modules/pi-commit/extensions/commit/config.ts',
-      'package/node_modules/pi-commit/extensions/commit/index.ts',
-      'package/node_modules/pi-commit/extensions/commit/opinionated-format.md',
-      'package/node_modules/pi-commit/extensions/commit/register.ts',
-      'package/node_modules/pi-commit/extensions/commit/worker-prompt.md'
+      'package/node_modules/@noice-tech/pi-commit/package.json',
+      'package/node_modules/@noice-tech/pi-commit/README.md',
+      'package/node_modules/@noice-tech/pi-commit/LICENSE',
+      'package/node_modules/@noice-tech/pi-commit/extensions/commit/command.ts',
+      'package/node_modules/@noice-tech/pi-commit/extensions/commit/config.ts',
+      'package/node_modules/@noice-tech/pi-commit/extensions/commit/index.ts',
+      'package/node_modules/@noice-tech/pi-commit/extensions/commit/opinionated-format.md',
+      'package/node_modules/@noice-tech/pi-commit/extensions/commit/register.ts',
+      'package/node_modules/@noice-tech/pi-commit/extensions/commit/worker-prompt.md'
     ],
-    allowedForbiddenPrefixes: ['package/node_modules/pi-commit/'],
+    allowedForbiddenPrefixes: ['package/node_modules/@noice-tech/pi-commit/'],
     piResources: {
-      extensions: ['./node_modules/pi-commit/extensions/commit/index.ts'],
+      extensions: [
+        './node_modules/@noice-tech/pi-commit/extensions/commit/index.ts'
+      ],
       prompts: ['./prompts/*.md']
     },
     exactArchive: true,
     dogfoodLocally: true
   },
-  'pi-commit': {
+  '@noice-tech/pi-commit': {
     required: [
       'package/package.json',
       'package/README.md',
@@ -278,11 +280,13 @@ try {
   }
 
   if (packageName === '@noice-tech/pi-changelog') {
-    if (manifest.dependencies?.['pi-commit'] !== manifest.version) {
-      fail('Packed changelog manifest must use its lockstep pi-commit version')
+    if (manifest.dependencies?.['@noice-tech/pi-commit'] !== manifest.version) {
+      fail(
+        'Packed changelog manifest must use its lockstep @noice-tech/pi-commit version'
+      )
     }
-    if (!manifest.bundledDependencies?.includes('pi-commit')) {
-      fail('Packed changelog manifest must bundle pi-commit')
+    if (!manifest.bundledDependencies?.includes('@noice-tech/pi-commit')) {
+      fail('Packed changelog manifest must bundle @noice-tech/pi-commit')
     }
   }
 

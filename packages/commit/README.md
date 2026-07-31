@@ -1,4 +1,4 @@
-# pi-commit
+# @noice-tech/pi-commit
 
 Commit, push, and open pull requests without interrupting your Pi session.
 
@@ -7,7 +7,7 @@ Commit, push, and open pull requests without interrupting your Pi session.
 Run this in the repository where you use Pi:
 
 ```bash
-pi install npm:pi-commit
+pi install -l npm:@noice-tech/pi-commit
 ```
 
 Commit the resulting `.pi/settings.json` change to install it for collaborators too.

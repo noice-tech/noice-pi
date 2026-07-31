@@ -10,7 +10,7 @@ Changes 7 · 2 untracked   Stack 2/4   PR ● #42 ↗   CI ✓ 8/8
 ## Install
 
 ```bash
-pi install npm:@noice-tech/pi-work-context
+pi install -l npm:@noice-tech/pi-work-context
 ```
 
 Restart Pi after installation. The display updates automatically; use `/work-context` for optional settings.

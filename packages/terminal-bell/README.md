@@ -5,7 +5,7 @@ Ring your terminal when Pi finishes a long run.
 ## Install
 
 ```bash
-pi install npm:@noice-tech/pi-terminal-bell
+pi install -l npm:@noice-tech/pi-terminal-bell
 ```
 
 ## Use

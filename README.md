@@ -6,7 +6,7 @@ MIT-licensed workflow packages for the [Pi coding agent](https://github.com/eare
 
 | Package                                                  | Description                                                                |
 | -------------------------------------------------------- | -------------------------------------------------------------------------- |
-| [`pi-commit`](packages/commit)                           | Commit, push, and open pull requests without interrupting your Pi session. |
+| [`@noice-tech/pi-commit`](packages/commit)               | Commit, push, and open pull requests without interrupting your Pi session. |
 | [`@noice-tech/pi-changelog`](packages/changelog)         | Preview unreleased changes and write privacy-safe release notes.           |
 | [`@noice-tech/pi-cutover`](packages/cutover)             | Turn a Pi planning session into a clean implementation handoff.            |
 | [`@noice-tech/pi-github-issues`](packages/github-issues) | Pick a GitHub issue and start a focused Pi planning session.               |
@@ -16,12 +16,12 @@ MIT-licensed workflow packages for the [Pi coding agent](https://github.com/eare
 Install the package you want from npm in the repository where you want to use it:
 
 ```bash
-pi install npm:pi-commit
-pi install npm:@noice-tech/pi-changelog
-pi install npm:@noice-tech/pi-cutover
-pi install npm:@noice-tech/pi-github-issues
-pi install npm:@noice-tech/pi-terminal-bell
-pi install npm:@noice-tech/pi-work-context
+pi install -l npm:@noice-tech/pi-commit
+pi install -l npm:@noice-tech/pi-changelog
+pi install -l npm:@noice-tech/pi-cutover
+pi install -l npm:@noice-tech/pi-github-issues
+pi install -l npm:@noice-tech/pi-terminal-bell
+pi install -l npm:@noice-tech/pi-work-context
 ```
 
 See each package README for its commands, prerequisites, permissions, and behavior.
