@@ -1,31 +1,31 @@
 # 🔔 @noice-tech/pi-terminal-bell
 
-Switch away from long Pi runs—your terminal alerts you when the agent settles.
+Ring your terminal when Pi finishes a long run.
 
 ## Install
 
 ```bash
-pi install npm:@noice-tech/pi-terminal-bell
+pi install -l npm:@noice-tech/pi-terminal-bell
 ```
 
-## Usage
+## Use
 
 There are no slash commands. The extension writes one standard BEL character after an interactive Pi run lasting at least 10 seconds.
 
-It only runs in TUI mode with TTY output. Your terminal decides whether BEL produces sound, a visual indicator, or an attention request.
-
-Set a different minimum duration in seconds, or use `0` for every eligible run:
+Set a different minimum duration in seconds, or use `0` for every run:
 
 ```bash
 PI_TERMINAL_BELL_MIN_DURATION=30 pi
 ```
 
+It runs only in TUI mode with TTY output. Your terminal decides whether BEL produces sound, a visual indicator, or an attention request.
+
 ## Terminal setup
 
-Test the terminal's BEL handling with:
+Test BEL handling with:
 
 ```bash
 printf '\a'
 ```
 
-For Ghostty, configure `bell-features = attention,title,border`; add `system` for a system alert. See the [Ghostty bell documentation](https://ghostty.org/docs/vt/control/bel).
+For Ghostty, set `bell-features = attention,title,border`; add `system` for a system alert. See the [Ghostty bell documentation](https://ghostty.org/docs/vt/control/bel).

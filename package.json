@@ -1,7 +1,7 @@
 {
   "name": "noice-pi",
   "private": true,
-  "description": "Noice Pi packages",
+  "description": "Workflow packages for the Pi coding agent.",
   "license": "MIT",
   "engines": {
     "node": "24.13.0",

@@ -1,7 +1,7 @@
 {
   "name": "@noice-tech/pi-work-context",
   "version": "1.2.1",
-  "description": "Keep Pi's terminal title and editor widget aligned with the current session, Git worktree, and GitHub pull request.",
+  "description": "Show session, Git, pull request, and CI context in every Pi terminal.",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -9,6 +9,8 @@
     "pi",
     "git",
     "github",
+    "pull-request",
+    "ci",
     "terminal-title",
     "worktree"
   ],

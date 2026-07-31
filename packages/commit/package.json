@@ -1,7 +1,7 @@
 {
-  "name": "pi-commit",
+  "name": "@noice-tech/pi-commit",
   "version": "1.2.1",
-  "description": "Commit, push, and open PRs from an isolated Pi session branch—keeping coding context clean while preserving the full worker transcript.",
+  "description": "Commit, push, and open pull requests without interrupting your Pi session.",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -9,9 +9,10 @@
     "pi",
     "commit",
     "git",
+    "github",
     "pull-request",
     "stacked-pr",
-    "changelog"
+    "coding-agent"
   ],
   "files": [
     "extensions/**/*.ts",
@@ -39,7 +40,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit --allowImportingTsExtensions --moduleResolution bundler --module ESNext --target ES2022 --skipLibCheck extensions/commit/index.ts",
-    "test": "node --test test/*.test.mjs && node ../../scripts/smoke-pack.mjs pi-commit packages/commit"
+    "test": "node --test test/*.test.mjs && node ../../scripts/smoke-pack.mjs @noice-tech/pi-commit packages/commit"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

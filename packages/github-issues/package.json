@@ -1,7 +1,7 @@
 {
   "name": "@noice-tech/pi-github-issues",
   "version": "1.2.1",
-  "description": "GitHub issue planning launcher for Pi.",
+  "description": "Pick a GitHub issue and start a focused Pi planning session.",
   "type": "module",
   "license": "MIT",
   "keywords": [

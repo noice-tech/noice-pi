@@ -23,7 +23,7 @@ importers:
       '@earendil-works/pi-tui':
         specifier: '*'
         version: 0.80.10
-      pi-commit:
+      '@noice-tech/pi-commit':
         specifier: workspace:*
         version: link:../commit
 

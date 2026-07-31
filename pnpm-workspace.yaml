@@ -2,7 +2,7 @@ packages:
   - 'packages/*'
 
 # pnpm can include workspace packages listed in bundledDependencies only with a
-# hoisted linker. pi-changelog bundles pi-commit so Pi can load it as one package.
+# hoisted linker. pi-changelog bundles @noice-tech/pi-commit so Pi can load it as one package.
 nodeLinker: hoisted
 
 allowBuilds:
