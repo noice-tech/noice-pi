@@ -1,5 +1,6 @@
 {
   "packages": [
+    "../packages/commit",
     "../packages/changelog",
     "../packages/cutover",
     "../packages/github-issues",

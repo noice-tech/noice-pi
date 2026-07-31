@@ -18,6 +18,7 @@
     "release:publish": "node scripts/publish-release.mjs"
   },
   "devDependencies": {
+    "jiti": "2.7.0",
     "oxfmt": "0.59.0"
   }
 }

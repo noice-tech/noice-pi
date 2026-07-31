@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import noiceChangelogExtension from '../extensions/changelog/index.ts'
+import piCommitExtension from '../extensions/commit/index.ts'
 
 const PROMPT_MESSAGE_TYPE = 'noice-changelog-commit-worker-prompt'
 const RESULT_MESSAGE_TYPE = 'noice-changelog-commit-result'
@@ -107,7 +107,7 @@ test('/commit selects immediately, then waits for the active turn', async () => 
     }
   }
 
-  noiceChangelogExtension(pi)
+  piCommitExtension(pi)
   assert.ok(command, '/commit command should be registered')
 
   const firstCommit = command.handler('', ctx)

@@ -30,7 +30,7 @@ These types express release intent. They are not Conventional Commits.
 - In a multi-package workspace, use the primary package's workspace directory basename as the scope. For example, work primarily in `packages/renderer` uses `renderer` even if its manifest name is `@example/pi-renderer`.
 - Determine the primary package from the PR's intent and the full branch diff against the detected PR base. Resolve the title from the resulting branch after the current change is committed, not from only the previous branch state, current worktree, or latest commit.
 - Incidental shared-file changes, such as a root lockfile updated alongside one package, do not override a clear primary package.
-- When multi-package work is root-only, cross-cutting, or has no clear primary package, use `monorepo`.
+- When multi-package work is root-only, cross-cutting, or has no clear primary package, use `type(monorepo): description`.
 - Use exactly one scope. Do not list several package names.
 
 Examples:

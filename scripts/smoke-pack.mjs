@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process'
+import { createJiti } from 'jiti'
 import {
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
-  statSync
+  statSync,
+  symlinkSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -30,16 +33,41 @@ const packageSpecifications = {
       'package/package.json',
       'package/README.md',
       'package/LICENSE',
-      'package/extensions/changelog/index.ts',
-      'package/extensions/changelog/rules.md',
-      'package/extensions/changelog/worker-prompt.md',
       'package/prompts/release-notes.md',
       'package/prompts/setup-release-notes-style.md',
-      'package/prompts/unreleased.md'
+      'package/prompts/unreleased.md',
+      'package/node_modules/pi-commit/package.json',
+      'package/node_modules/pi-commit/README.md',
+      'package/node_modules/pi-commit/LICENSE',
+      'package/node_modules/pi-commit/extensions/commit/command.ts',
+      'package/node_modules/pi-commit/extensions/commit/config.ts',
+      'package/node_modules/pi-commit/extensions/commit/index.ts',
+      'package/node_modules/pi-commit/extensions/commit/opinionated-format.md',
+      'package/node_modules/pi-commit/extensions/commit/register.ts',
+      'package/node_modules/pi-commit/extensions/commit/worker-prompt.md'
+    ],
+    allowedForbiddenPrefixes: ['package/node_modules/pi-commit/'],
+    piResources: {
+      extensions: ['./node_modules/pi-commit/extensions/commit/index.ts'],
+      prompts: ['./prompts/*.md']
+    },
+    exactArchive: true,
+    dogfoodLocally: true
+  },
+  'pi-commit': {
+    required: [
+      'package/package.json',
+      'package/README.md',
+      'package/LICENSE',
+      'package/extensions/commit/command.ts',
+      'package/extensions/commit/config.ts',
+      'package/extensions/commit/index.ts',
+      'package/extensions/commit/opinionated-format.md',
+      'package/extensions/commit/register.ts',
+      'package/extensions/commit/worker-prompt.md'
     ],
     piResources: {
-      extensions: ['./extensions/changelog/index.ts'],
-      prompts: ['./prompts/*.md']
+      extensions: ['./extensions/commit/index.ts']
     },
     exactArchive: true,
     dogfoodLocally: true
@@ -106,6 +134,15 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'))
 }
 
+function statOrUndefined(path) {
+  try {
+    return statSync(path)
+  } catch (error) {
+    if (error.code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
 function arraysEqual(actual, expected) {
   return (
     Array.isArray(actual) &&
@@ -170,7 +207,12 @@ try {
   for (const entry of entries) {
     const segments = entry.split('/')
     const forbidden = segments.find((segment) => forbiddenSegments.has(segment))
-    if (forbidden) fail(`Packed archive contains forbidden path: ${entry}`)
+    const explicitlyAllowed = specification.allowedForbiddenPrefixes?.some(
+      (prefix) => entry.startsWith(prefix)
+    )
+    if (forbidden && !explicitlyAllowed) {
+      fail(`Packed archive contains forbidden path: ${entry}`)
+    }
   }
 
   if (specification.exactArchive) {
@@ -222,6 +264,48 @@ try {
   )) {
     if (!arraysEqual(manifest.pi?.[resourceType], expectedPaths)) {
       fail(`Packed manifest has incorrect Pi ${resourceType} resource paths`)
+    }
+  }
+
+  const exportedPaths = Object.values(manifest.exports ?? {}).filter(
+    (value) => typeof value === 'string'
+  )
+  for (const exportedPath of exportedPaths) {
+    const archivePath = `package/${exportedPath.replace(/^\.\//, '')}`
+    if (!entries.includes(archivePath)) {
+      fail(`Packed manifest export is missing from archive: ${exportedPath}`)
+    }
+  }
+
+  if (packageName === '@noice-tech/pi-changelog') {
+    if (manifest.dependencies?.['pi-commit'] !== manifest.version) {
+      fail('Packed changelog manifest must use its lockstep pi-commit version')
+    }
+    if (!manifest.bundledDependencies?.includes('pi-commit')) {
+      fail('Packed changelog manifest must bundle pi-commit')
+    }
+  }
+
+  const extractedPackage = join(tempDirectory, 'package')
+  const extractedNodeModules = join(extractedPackage, 'node_modules')
+  mkdirSync(extractedNodeModules, { recursive: true })
+  const peerScope = join(extractedNodeModules, '@earendil-works')
+  if (!statOrUndefined(peerScope)) {
+    symlinkSync(
+      join(repositoryRoot, 'node_modules', '@earendil-works'),
+      peerScope,
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+  }
+  const jiti = createJiti(import.meta.url, { moduleCache: false })
+  for (const extensionPath of manifest.pi?.extensions ?? []) {
+    if (extensionPath.includes('*')) continue
+    const entryPath = join(extractedPackage, extensionPath.replace(/^\.\//, ''))
+    const loaded = await jiti.import(entryPath)
+    if (typeof loaded.default !== 'function') {
+      fail(
+        `Packed Pi extension has no default function export: ${extensionPath}`
+      )
     }
   }
 

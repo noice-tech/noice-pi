@@ -7,27 +7,23 @@ import { Container, Markdown, Spacer, Text } from '@earendil-works/pi-tui'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-
-const CHANGE_TYPES = ['auto', 'feat', 'fix', 'improve', 'internal'] as const
-type ChangeType = (typeof CHANGE_TYPES)[number]
-type CommitMode = 'normal' | 'stacked'
-
-const CHANGE_TYPE_OPTIONS: Array<{ type: ChangeType; label: string }> = [
-  {
-    type: 'auto',
-    label: 'auto - Let commit worker infer from session and diff'
-  },
-  { type: 'feat', label: 'feat - New user-facing capability' },
-  { type: 'fix', label: 'fix - User-facing bug fix' },
-  {
-    type: 'improve',
-    label: 'improve - User-facing refinement/performance/reliability'
-  },
-  {
-    type: 'internal',
-    label: 'internal - Infra/tooling/tests/refactor/deps/logging'
-  }
-]
+import {
+  changeTypeOptions,
+  getCommitArgumentCompletions,
+  parseCommitArguments,
+  renderCustomFormatPolicy,
+  type ChangeType,
+  type CommitMode,
+  type ResolvedCommitArguments
+} from './command.ts'
+import {
+  DEFAULT_COMMIT_CONFIG,
+  defaultConfigSource,
+  getCommitConfigPaths,
+  loadCommitConfig,
+  writeCommitConfigFile,
+  type ResolvedCommitConfig
+} from './config.ts'
 
 const MESSAGE_TYPE = 'noice-changelog-commit-result'
 const PROMPT_MESSAGE_TYPE = 'noice-changelog-commit-worker-prompt'
@@ -43,18 +39,45 @@ interface CommitResultDetails {
   status?: CommitDisplayStatus
 }
 
-let commitCommandPending = false
-let commitWorkerRunning = false
-let agentEndWaiter: ((messages: unknown[]) => void) | undefined
-let latestCommitWorkerMessages: unknown[] | undefined
+interface CommitRuntime {
+  cachedConfig: ResolvedCommitConfig
+  commitCommandPending: boolean
+  commitWorkerRunning: boolean
+  agentEndWaiter?: (messages: unknown[]) => void
+  latestCommitWorkerMessages?: unknown[]
+}
 
-export default function noiceChangelogExtension(pi: ExtensionAPI) {
+const RUNTIME_REGISTRY_KEY = Symbol.for('pi-commit.runtime.v1')
+type RuntimeRegistry = WeakMap<object, CommitRuntime>
+
+function getRuntimeRegistry(): RuntimeRegistry {
+  const globals = globalThis as typeof globalThis & {
+    [RUNTIME_REGISTRY_KEY]?: RuntimeRegistry
+  }
+  return (globals[RUNTIME_REGISTRY_KEY] ??= new WeakMap())
+}
+
+export function registerCommit(pi: ExtensionAPI): void {
+  const registry = getRuntimeRegistry()
+  // Pi creates a distinct ExtensionAPI wrapper for each extension, but every
+  // wrapper in one runtime shares the event bus. Keying by that bus deduplicates
+  // direct and bundled copies while preserving independent Pi runtimes.
+  const runtimeKey = pi.events ?? pi
+  if (registry.has(runtimeKey)) return
+
+  const runtime: CommitRuntime = {
+    cachedConfig: DEFAULT_COMMIT_CONFIG,
+    commitCommandPending: false,
+    commitWorkerRunning: false
+  }
+  registry.set(runtimeKey, runtime)
+
   pi.on('agent_end', (event) => {
-    if (commitWorkerRunning) {
-      latestCommitWorkerMessages = event.messages
+    if (runtime.commitWorkerRunning) {
+      runtime.latestCommitWorkerMessages = event.messages
     }
-    agentEndWaiter?.(event.messages)
-    agentEndWaiter = undefined
+    runtime.agentEndWaiter?.(event.messages)
+    runtime.agentEndWaiter = undefined
   })
 
   pi.on('context', (event) => {
@@ -62,11 +85,28 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
       messages: event.messages.filter((message) => {
         const customType = (message as { customType?: string }).customType
         if (customType === MESSAGE_TYPE) return false
-        if (customType === PROMPT_MESSAGE_TYPE && !commitWorkerRunning)
+        if (
+          customType === PROMPT_MESSAGE_TYPE &&
+          !runtime.commitWorkerRunning
+        ) {
           return false
+        }
         return true
       })
     }
+  })
+
+  pi.on('session_start', async (_event, ctx) => {
+    try {
+      runtime.cachedConfig = await loadConfigForContext(ctx)
+    } catch (error) {
+      runtime.cachedConfig = DEFAULT_COMMIT_CONFIG
+      ctx.ui.notify(errorMessage(error), 'warning')
+    }
+  })
+
+  pi.on('session_shutdown', () => {
+    if (registry.get(runtimeKey) === runtime) registry.delete(runtimeKey)
   })
 
   async function sendResultAtSourceLeaf(
@@ -152,27 +192,36 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
     }
   )
 
+  pi.registerCommand('commit-config', {
+    description: 'Configure pi-commit defaults for this user or project.',
+    handler: async (_args, ctx) => {
+      await configureCommit(ctx, runtime)
+    }
+  })
+
   pi.registerCommand('commit', {
     description:
-      'Commit changes and create/update PR. Use /commit stacked to add a PR above the current PR.',
-    getArgumentCompletions: getCommitArgumentCompletions,
+      'Commit on an isolated context branch, then push and optionally manage a PR.',
+    getArgumentCompletions: (prefix) =>
+      getCommitArgumentCompletions(prefix, runtime.cachedConfig),
     handler: async (args, ctx) => {
-      if (commitCommandPending || commitWorkerRunning) {
+      if (runtime.commitCommandPending || runtime.commitWorkerRunning) {
         ctx.ui.notify('Commit command is already active', 'warning')
         return
       }
 
-      commitCommandPending = true
+      runtime.commitCommandPending = true
       let prepared: Awaited<ReturnType<typeof prepareCommit>>
       try {
-        prepared = await prepareCommit(args, ctx)
+        prepared = await prepareCommit(args, ctx, runtime)
       } catch (error) {
-        commitCommandPending = false
-        throw error
+        runtime.commitCommandPending = false
+        ctx.ui.notify(errorMessage(error), 'error')
+        return
       }
 
       if (!prepared) {
-        commitCommandPending = false
+        runtime.commitCommandPending = false
         return
       }
 
@@ -182,18 +231,18 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
       // Establish the running guard before releasing the pending guard. Keeping
       // this transition synchronous prevents a re-entrant command from starting
       // a second worker and overwriting the singleton agent-end waiter.
-      commitWorkerRunning = true
-      commitCommandPending = false
+      runtime.commitWorkerRunning = true
+      runtime.commitCommandPending = false
 
       try {
         showCommitWorkerBanner(ctx)
         ctx.ui.notify(
-          `Starting commit worker (${parsed.mode === 'stacked' ? 'stacked ' : ''}${parsed.changeType})`,
+          `Starting commit worker (${parsed.mode === 'stacked' ? 'stacked ' : ''}${parsed.changeType}${parsed.pullRequest === 'never' ? ', no PR' : ''})`,
           'info'
         )
 
-        const agentEnd = waitForNextAgentEndAfterIdle(ctx)
-        latestCommitWorkerMessages = undefined
+        const agentEnd = waitForNextAgentEndAfterIdle(ctx, runtime)
+        runtime.latestCommitWorkerMessages = undefined
         pi.sendMessage(
           {
             customType: PROMPT_MESSAGE_TYPE,
@@ -310,9 +359,10 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
               : 'info'
         )
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        if (startLeafId)
+        const message = errorMessage(error)
+        if (startLeafId) {
           await ctx.navigateTree(startLeafId, { summarize: false })
+        }
         await sendResultAtSourceLeaf(ctx, startLeafId, {
           customType: MESSAGE_TYPE,
           content: `Commit worker failed: ${message}`,
@@ -327,8 +377,8 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
         ctx.ui.notify(`Commit worker failed:\n${message}`, 'error')
       } finally {
         ctx.ui.setWidget(COMMIT_WORKER_WIDGET_KEY, undefined)
-        commitWorkerRunning = false
-        latestCommitWorkerMessages = undefined
+        runtime.commitWorkerRunning = false
+        runtime.latestCommitWorkerMessages = undefined
       }
     }
   })
@@ -348,76 +398,15 @@ function showCommitWorkerBanner(ctx: ExtensionCommandContext) {
   )
 }
 
-function getCommitArgumentCompletions(prefix: string) {
-  const trimmedStart = prefix.trimStart()
-  const leadingWhitespace = prefix.slice(0, prefix.length - trimmedStart.length)
-  const [firstWord = ''] = trimmedStart.split(/\s+/)
-  const hasFirstSeparator = /^\S+\s/.test(trimmedStart)
-
-  if (!hasFirstSeparator) {
-    const options = [
-      ...CHANGE_TYPE_OPTIONS.map((option) => ({
-        value: option.type,
-        label: option.label
-      })),
-      {
-        value: 'stacked',
-        label: 'stacked - Add changes above the current pull request'
-      }
-    ].filter((option) => option.value.startsWith(firstWord))
-
-    return options.length > 0
-      ? options.map((option) => ({
-          value: `${leadingWhitespace}${option.value} `,
-          label: option.label
-        }))
-      : null
-  }
-
-  if (firstWord === 'stacked') {
-    const remainder = trimmedStart.slice(firstWord.length).trimStart()
-    const [possibleType = ''] = remainder.split(/\s+/)
-    const hasTypeSeparator = /^\S+\s/.test(remainder)
-
-    if (!hasTypeSeparator) {
-      const matches = CHANGE_TYPE_OPTIONS.filter((option) =>
-        option.type.startsWith(possibleType)
-      )
-      return matches.length > 0
-        ? matches.map((option) => ({
-            value: `${leadingWhitespace}stacked ${option.type} `,
-            label: option.label
-          }))
-        : null
-    }
-
-    if (!isChangeType(possibleType)) return null
-    return contextCompletion(
-      prefix,
-      remainder.slice(possibleType.length).trim()
-    )
-  }
-
-  if (!isChangeType(firstWord)) return null
-  return contextCompletion(prefix, trimmedStart.slice(firstWord.length).trim())
-}
-
-function contextCompletion(prefix: string, whatWasDone: string) {
-  return [
-    {
-      value: prefix,
-      label: whatWasDone
-        ? `What was done: "${whatWasDone}"`
-        : 'Say what was done — rough wording is fine; leave blank to infer from session/diff'
-    }
-  ]
-}
-
 async function prepareCommit(
   args: string | undefined,
-  ctx: ExtensionCommandContext
+  ctx: ExtensionCommandContext,
+  runtime: CommitRuntime
 ) {
-  const parsed = await resolveChangeTypeAndContext(args, ctx)
+  const config = await loadConfigForContext(ctx)
+  runtime.cachedConfig = config
+  const unresolved = parseCommitArguments(args, config)
+  const parsed = await resolveChangeTypeAndContext(unresolved, config, ctx)
   if (!parsed) return null
 
   if (!ctx.isIdle()) {
@@ -428,11 +417,7 @@ async function prepareCommit(
   }
 
   await ctx.waitForIdle()
-  const prompt = await buildWorkerPrompt(
-    parsed.mode,
-    parsed.changeType,
-    parsed.context
-  )
+  const prompt = await buildWorkerPrompt(parsed, config)
   // Prompt loading is asynchronous. Re-check idle so another user turn cannot
   // slip in between the original wait and worker startup.
   await ctx.waitForIdle()
@@ -441,70 +426,58 @@ async function prepareCommit(
 }
 
 async function resolveChangeTypeAndContext(
-  args: string | undefined,
+  parsed: ReturnType<typeof parseCommitArguments>,
+  config: ResolvedCommitConfig,
   ctx: ExtensionCommandContext
-): Promise<{
-  mode: CommitMode
-  changeType: ChangeType
-  context: string
-} | null> {
-  const trimmedArgs = args?.trim() ?? ''
-  const words = trimmedArgs ? trimmedArgs.split(/\s+/) : []
-  const mode: CommitMode = words[0] === 'stacked' ? 'stacked' : 'normal'
-  const modeArgs = mode === 'stacked' ? words.slice(1) : words
-  const [possibleType = '', ...contextWords] = modeArgs
-
-  if (isChangeType(possibleType)) {
-    return {
-      mode,
-      changeType: possibleType,
-      context: contextWords.join(' ').trim()
-    }
+): Promise<ResolvedCommitArguments | null> {
+  if (parsed.changeType) {
+    return { ...parsed, changeType: parsed.changeType }
   }
 
+  const options = changeTypeOptions(config)
   const selected = await ctx.ui.select(
     'Change type',
-    CHANGE_TYPE_OPTIONS.map((option) => option.label)
+    options.map((option) => option.label)
   )
   if (!selected) return null
 
-  const option = CHANGE_TYPE_OPTIONS.find((item) =>
-    selected.startsWith(item.type)
+  const option = options.find(
+    (item) => selected === item.label || selected.startsWith(`${item.type} -`)
   )
   if (!option) return null
 
-  return {
-    mode,
-    changeType: option.type,
-    context: modeArgs.join(' ').trim()
-  }
-}
-
-function isChangeType(value: string): value is ChangeType {
-  return CHANGE_TYPES.includes(value as ChangeType)
+  return { ...parsed, changeType: option.type }
 }
 
 async function buildWorkerPrompt(
-  mode: CommitMode,
-  changeType: ChangeType,
-  userContext: string
+  parsed: ResolvedCommitArguments,
+  config: ResolvedCommitConfig
 ) {
   const extensionDir = dirname(fileURLToPath(import.meta.url))
-  const [template, rules] = await Promise.all([
-    readFile(join(extensionDir, 'worker-prompt.md'), 'utf-8'),
-    readFile(join(extensionDir, 'rules.md'), 'utf-8')
+  const customPolicy = renderCustomFormatPolicy(config, parsed.changeType)
+  const [template, opinionatedPolicy] = await Promise.all([
+    readFile(join(extensionDir, 'worker-prompt.md'), 'utf8'),
+    customPolicy
+      ? Promise.resolve('')
+      : readFile(join(extensionDir, 'opinionated-format.md'), 'utf8')
   ])
+  const formatPolicy = customPolicy ?? opinionatedPolicy
 
   return template
-    .replaceAll('{{mode}}', mode)
-    .replaceAll('{{changeType}}', changeType)
-    .replaceAll('{{userContext}}', userContext || '(none)')
-    .replaceAll('{{rules}}', rules)
+    .replaceAll('{{mode}}', parsed.mode)
+    .replaceAll('{{pullRequestBehavior}}', parsed.pullRequest)
+    .replaceAll('{{changeType}}', parsed.changeType)
+    .replaceAll('{{userContext}}', parsed.context || '(none)')
+    .replaceAll('{{formatPolicy}}', formatPolicy)
+    .replaceAll('{{rules}}', formatPolicy)
 }
 
-function waitForNextAgentEndAfterIdle(ctx: ExtensionCommandContext) {
+function waitForNextAgentEndAfterIdle(
+  ctx: ExtensionCommandContext,
+  runtime: CommitRuntime
+) {
   return new Promise<unknown[]>((resolve) => {
-    agentEndWaiter = (messages) => {
+    runtime.agentEndWaiter = (messages) => {
       void (async () => {
         // `agent_end` also fires for transient provider failures that Pi may
         // auto-retry. Wait until the whole agent run is idle, then use the
@@ -512,10 +485,115 @@ function waitForNextAgentEndAfterIdle(ctx: ExtensionCommandContext) {
         if (!ctx.isIdle()) {
           await ctx.waitForIdle()
         }
-        resolve(latestCommitWorkerMessages ?? messages)
+        resolve(runtime.latestCommitWorkerMessages ?? messages)
       })()
     }
   })
+}
+
+async function loadConfigForContext(
+  ctx: Pick<ExtensionCommandContext, 'cwd' | 'isProjectTrusted'>
+): Promise<ResolvedCommitConfig> {
+  const adaptable = ctx as {
+    cwd?: string
+    isProjectTrusted?: () => boolean
+  }
+  if (!adaptable.cwd) return DEFAULT_COMMIT_CONFIG
+
+  return loadCommitConfig({
+    cwd: adaptable.cwd,
+    projectTrusted: adaptable.isProjectTrusted?.() ?? false
+  })
+}
+
+async function configureCommit(
+  ctx: ExtensionCommandContext,
+  runtime: CommitRuntime
+) {
+  const adaptable = ctx as ExtensionCommandContext & {
+    cwd?: string
+    isProjectTrusted?: () => boolean
+  }
+  const cwd = adaptable.cwd ?? process.cwd()
+  const paths = getCommitConfigPaths(cwd)
+
+  if (ctx.mode !== 'tui') {
+    ctx.ui.notify(
+      `Edit pi-commit configuration manually.\nUser: ${paths.user}\nProject: ${paths.project}\n\n${defaultConfigSource()}`,
+      'info'
+    )
+    return
+  }
+
+  const userLabel = `User — ${paths.user}`
+  const projectLabel = `Project — ${paths.project}`
+  const selectedScope = await ctx.ui.select('Configure pi-commit', [
+    userLabel,
+    projectLabel
+  ])
+  if (!selectedScope) return
+
+  const project = selectedScope === projectLabel
+  if (project && !(adaptable.isProjectTrusted?.() ?? false)) {
+    ctx.ui.notify(
+      'Project configuration is available only after trusting this project',
+      'error'
+    )
+    return
+  }
+
+  const path = project ? paths.project : paths.user
+  let draft: string
+  try {
+    draft = await readFile(path, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      ctx.ui.notify(`Could not read ${path}: ${errorMessage(error)}`, 'error')
+      return
+    }
+    draft = defaultConfigSource()
+  }
+
+  while (true) {
+    const edited = await ctx.ui.editor(`Edit ${path}`, draft)
+    if (edited === undefined) return
+    draft = edited
+
+    try {
+      await writeCommitConfigFile(path, draft)
+    } catch (error) {
+      const retry = await ctx.ui.select(
+        `Invalid pi-commit configuration: ${errorMessage(error)}`,
+        ['Edit again', 'Cancel']
+      )
+      if (retry !== 'Edit again') return
+      continue
+    }
+
+    try {
+      runtime.cachedConfig = await loadConfigForContext(ctx)
+    } catch (error) {
+      ctx.ui.notify(
+        `Saved ${path}, but another configuration file is invalid: ${errorMessage(error)}`,
+        'error'
+      )
+      return
+    }
+
+    const format =
+      runtime.cachedConfig.format === 'opinionated'
+        ? 'opinionated'
+        : `custom (${runtime.cachedConfig.format.changeTypes.map(({ name }) => name).join(', ')})`
+    ctx.ui.notify(
+      `Saved ${path}\nPull requests: ${runtime.cachedConfig.pullRequest}\nFormat: ${format}`,
+      'info'
+    )
+    return
+  }
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function getDisplayStatus(

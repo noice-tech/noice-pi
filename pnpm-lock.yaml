@@ -8,11 +8,26 @@ importers:
 
   .:
     devDependencies:
+      jiti:
+        specifier: 2.7.0
+        version: 2.7.0
       oxfmt:
         specifier: 0.59.0
         version: 0.59.0
 
   packages/changelog:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.80.10(ws@8.21.1)(zod@4.4.3)
+      '@earendil-works/pi-tui':
+        specifier: '*'
+        version: 0.80.10
+      pi-commit:
+        specifier: workspace:*
+        version: link:../commit
+
+  packages/commit:
     devDependencies:
       '@earendil-works/pi-coding-agent':
         specifier: 0.80.10
