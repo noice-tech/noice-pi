@@ -32,6 +32,7 @@ const CHANGE_TYPE_OPTIONS: Array<{ type: ChangeType; label: string }> = [
 ]
 
 const MESSAGE_TYPE = 'noice-changelog-commit-result'
+const EXEC_MESSAGE_TYPE = 'noice-changelog-commit-exec'
 const PROSE_PROMPT_MESSAGE_TYPE = 'noice-changelog-commit-prose-prompt'
 const PROSE_CHECKPOINT_TYPE = 'noice-changelog-commit-prose-checkpoint'
 const COMMIT_WIDGET_KEY = 'noice-changelog-commit-worker'
@@ -119,6 +120,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
     messages: event.messages.filter((message) => {
       const customType = (message as { customType?: string }).customType
       if (customType === MESSAGE_TYPE) return false
+      if (customType === EXEC_MESSAGE_TYPE) return false
       if (customType === PROSE_PROMPT_MESSAGE_TYPE && !commitProseRunning)
         return false
       return true
@@ -198,7 +200,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
       )
       try {
         const workflow = await executeCommitWorkflow(
-          { cwd: ctx.cwd, exec: pi.exec.bind(pi) },
+          { cwd: ctx.cwd, exec: createAuditedWorkflowExec(pi) },
           parsed.changeType,
           parsed.context,
           {
@@ -412,6 +414,104 @@ function findLastBranchAssistant(
       return entry.message
   }
   return undefined
+}
+
+function createAuditedWorkflowExec(pi: ExtensionAPI) {
+  let sequence = 0
+  return async (
+    command: string,
+    args: string[],
+    options?: Parameters<ExtensionAPI['exec']>[2]
+  ) => {
+    const callNumber = (sequence += 1)
+    const startedAt = Date.now()
+    try {
+      const response = await pi.exec(command, args, options)
+      appendExecHistory(pi, {
+        callNumber,
+        command,
+        args,
+        cwd: options?.cwd,
+        elapsedMs: Date.now() - startedAt,
+        code: response.code,
+        killed: response.killed,
+        stdout: response.stdout,
+        stderr: response.stderr
+      })
+      return response
+    } catch (error) {
+      appendExecHistory(pi, {
+        callNumber,
+        command,
+        args,
+        cwd: options?.cwd,
+        elapsedMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      throw error
+    }
+  }
+}
+
+interface ExecHistoryEntry {
+  callNumber: number
+  command: string
+  args: string[]
+  cwd?: string
+  elapsedMs: number
+  code?: number
+  killed?: boolean
+  stdout?: string
+  stderr?: string
+  error?: string
+}
+
+function appendExecHistory(pi: ExtensionAPI, entry: ExecHistoryEntry) {
+  const renderedCommand = [entry.command, ...entry.args]
+    .map(quoteCommandArgument)
+    .join(' ')
+  const outcome = entry.error
+    ? `error: ${entry.error}`
+    : `exit: ${entry.code ?? 'unknown'}${entry.killed ? ' (killed)' : ''}`
+  const output = [
+    `$ ${renderedCommand}`,
+    `call: ${entry.callNumber}`,
+    `cwd: ${entry.cwd ?? '(default)'}`,
+    `${outcome} · ${formatElapsed(entry.elapsedMs)}`,
+    entry.stdout ? `stdout:\n${boundedExecOutput(entry.stdout)}` : '',
+    entry.stderr ? `stderr:\n${boundedExecOutput(entry.stderr)}` : ''
+  ]
+    .filter(Boolean)
+    .join('\n')
+  pi.sendMessage({
+    customType: EXEC_MESSAGE_TYPE,
+    content: output,
+    display: false,
+    details: {
+      callNumber: entry.callNumber,
+      command: entry.command,
+      args: entry.args,
+      cwd: entry.cwd,
+      elapsedMs: entry.elapsedMs,
+      code: entry.code,
+      killed: entry.killed,
+      error: entry.error,
+      stdoutCharacters: entry.stdout?.length ?? 0,
+      stderrCharacters: entry.stderr?.length ?? 0
+    }
+  })
+}
+
+function quoteCommandArgument(value: string) {
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) return value
+  return `'${value.replaceAll("'", "'\\''")}'`
+}
+
+function boundedExecOutput(value: string) {
+  const normalized = value.replaceAll('\0', '\\0')
+  const limit = 4_000
+  if (normalized.length <= limit) return normalized
+  return `${normalized.slice(0, limit)}\n[TRUNCATED ${normalized.length - limit} CHARACTERS]`
 }
 
 async function sendResult(

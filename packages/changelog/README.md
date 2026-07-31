@@ -55,6 +55,8 @@ Other inputs use a filesystem-safe slug derived from the argument. The public fi
 
 `/commit` waits for the active turn to finish, then the extension inspects and mutates Git and GitHub. A hidden turn branched from the active conversation decides which opaque status entries belong to the user's work and generates commit/PR wording, preserving conversation context and the provider prompt cache. The extension blocks tools during that turn and strictly validates that every dirty entry is selected or intentionally ignored. It then returns to the original conversation branch, commits only selected entries through an isolated Git index, leaves ignored worktree and staged state untouched, pushes the branch, and creates or updates the matching PR.
 
+Every extension-owned CLI invocation is retained as a hidden session message, including its command, working directory, result, timing, and bounded output. These audit entries remain available in `/tree` while staying out of the normal transcript and model context.
+
 An existing open PR keeps its base branch. For a new PR, base configuration is read in this order:
 
 1. `branch.<name>.noice-base`

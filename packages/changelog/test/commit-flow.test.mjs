@@ -8,6 +8,7 @@ import noiceChangelogExtension, {
 } from '../extensions/changelog/index.ts'
 
 const RESULT_MESSAGE_TYPE = 'noice-changelog-commit-result'
+const EXEC_MESSAGE_TYPE = 'noice-changelog-commit-exec'
 
 test('prose generation reuses the active conversation and keeps tools read-only', async () => {
   const source = await readFile(
@@ -204,6 +205,17 @@ test('prose turn branches from and returns to the active conversation', async ()
     undefined,
     'tool blocking must be cleared after returning to the source leaf'
   )
+  const context = handlers.get('context')?.({
+    messages: [
+      { role: 'user', content: 'keep me' },
+      {
+        role: 'custom',
+        customType: EXEC_MESSAGE_TYPE,
+        content: '$ git status'
+      }
+    ]
+  })
+  assert.deepEqual(context.messages, [{ role: 'user', content: 'keep me' }])
 })
 
 function result(stdout = '', code = 0, stderr = '') {
@@ -305,17 +317,33 @@ test('/commit selects immediately, waits for idle, and does not trigger an agent
   for (const resolve of idleWaiters.splice(0)) resolve()
   await pending
 
-  assert.equal(sentMessages.length, 1)
-  assert.equal(sentMessages[0].message.customType, RESULT_MESSAGE_TYPE)
-  assert.equal(sentMessages[0].options, undefined)
-  assert.equal(sentMessages[0].message.display, false)
-  assert.match(sentMessages[0].message.content, /^status: no_changes/m)
-  assert.doesNotMatch(sentMessages[0].message.content, /activity:/)
+  const resultMessages = sentMessages.filter(
+    ({ message }) => message.customType === RESULT_MESSAGE_TYPE
+  )
+  const execMessages = sentMessages.filter(
+    ({ message }) => message.customType === EXEC_MESSAGE_TYPE
+  )
+  assert.equal(resultMessages.length, 1)
+  assert.ok(execMessages.length > 0)
+  assert.ok(execMessages.every(({ message }) => message.display === false))
+  assert.match(execMessages[0].message.content, /^\$ git /)
+  assert.match(execMessages[0].message.content, /exit: 0/)
+  assert.equal(resultMessages[0].options, undefined)
+  assert.equal(resultMessages[0].message.display, false)
+  assert.match(resultMessages[0].message.content, /^status: no_changes/m)
+  assert.doesNotMatch(resultMessages[0].message.content, /activity:/)
   assert.doesNotMatch(
-    sentMessages[0].message.content,
+    resultMessages[0].message.content,
     /Inspecting Git and GitHub state/
   )
-  assert.doesNotMatch(sentMessages[0].message.content, /worker branch/i)
+  assert.doesNotMatch(resultMessages[0].message.content, /worker branch/i)
+  assert.ok(
+    notifications.some(
+      ({ message }) =>
+        message ===
+        'Commit workflow finished:\nstatus: no_changes\ncommit: none\npr: none\nverification: Not run\nnotes: none'
+    )
+  )
   const renderedProgress = widgets.filter(Array.isArray).flat().join('\n')
   assert.match(renderedProgress, /Finding repository root/)
   assert.match(renderedProgress, /No changes to commit/)
