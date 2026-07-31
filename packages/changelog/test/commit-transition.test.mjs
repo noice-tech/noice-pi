@@ -63,6 +63,7 @@ async function repositoryFixture() {
 
   const prs = []
   const calls = []
+  let stackState = null
   const ctx = {
     cwd: repo,
     async exec(command, args, options = {}) {
@@ -84,6 +85,58 @@ async function repositoryFixture() {
         }
       }
       const line = args.join(' ')
+      if (line === 'stack view --json') {
+        if (!stackState) {
+          return {
+            stdout: '',
+            stderr: `current branch is not part of a stack`,
+            code: 2,
+            killed: false
+          }
+        }
+        const currentBranch = await git(repo, 'branch', '--show-current')
+        return ok(
+          JSON.stringify({
+            trunk: stackState.trunk,
+            currentBranch,
+            branches: stackState.branches.map((name) => ({
+              name,
+              pr: prs.find((pr) => pr.headRefName === name)
+                ? {
+                    number: prs.find((pr) => pr.headRefName === name).number,
+                    state: 'OPEN'
+                  }
+                : undefined,
+              isCurrent: name === currentBranch,
+              isMerged: false,
+              isQueued: false,
+              needsRebase: name === 'feature-parent'
+            }))
+          })
+        )
+      }
+      if (line.startsWith('stack checkout ')) {
+        return {
+          stdout: '',
+          stderr: `pull request is not part of a stack`,
+          code: 2,
+          killed: false
+        }
+      }
+      if (line.startsWith('stack init ')) {
+        stackState = {
+          trunk: args[args.indexOf('--base') + 1],
+          branches: [args.at(-1)]
+        }
+        return ok()
+      }
+      if (line.startsWith('stack add ')) {
+        const branch = args.at(-1)
+        await git(repo, 'switch', '-c', branch)
+        stackState.branches.push(branch)
+        return ok()
+      }
+      if (line === 'stack submit --auto') return ok()
       if (line.startsWith('repo view ')) {
         return ok(
           JSON.stringify({
@@ -115,6 +168,16 @@ async function repositoryFixture() {
           url: `https://example/${prs.length + 1}`
         })
         return ok('https://example/new\n')
+      }
+      if (line.startsWith('api ') && args[1].includes('/stacks?')) {
+        return ok(
+          JSON.stringify([
+            {
+              number: 1,
+              pull_requests: prs.map((pr) => ({ number: pr.number }))
+            }
+          ])
+        )
       }
       if (line.startsWith('api ')) {
         const number = Number(args[1].split('/').at(-1))
@@ -412,6 +475,114 @@ test('dirty default branch is forked, includes untracked content, and runs from 
         .every((call) => !call.cwd || call.cwd === discoveredRoot),
       'all operations after top-level discovery use the repository root'
     )
+  } finally {
+    await fixture.cleanup()
+  }
+})
+
+test('/commit stacked requires an open PR for the exact current branch', async () => {
+  const fixture = await repositoryFixture()
+  try {
+    await git(fixture.repo, 'switch', '-c', 'unpublished-layer')
+    await writeFile(join(fixture.repo, 'package.json'), '{"dirty":true}\n')
+    let generated = false
+    await assert.rejects(
+      executeCommitWorkflow(
+        fixture.ctx,
+        'internal',
+        '',
+        {
+          async generateProse() {
+            generated = true
+            return modelProse()
+          }
+        },
+        'stacked'
+      ),
+      /requires the current branch to have one open pull request/
+    )
+    assert.equal(generated, false)
+    assert.equal(
+      fixture.calls.some(
+        ({ command, args }) => command === 'gh' && args[0] === 'stack'
+      ),
+      false
+    )
+  } finally {
+    await fixture.cleanup()
+  }
+})
+
+test('/commit stacked adds selected changes above a parent that gh stack says needs rebase', async () => {
+  const fixture = await repositoryFixture()
+  try {
+    await git(fixture.repo, 'switch', '-c', 'feature-parent')
+    await writeFile(join(fixture.repo, 'package.json'), '{"parent":true}\n')
+    await git(fixture.repo, 'add', 'package.json')
+    await git(fixture.repo, 'commit', '-m', 'improve: create parent layer')
+    await git(fixture.repo, 'push', '-u', 'origin', 'feature-parent')
+    const parentSha = await git(fixture.repo, 'rev-parse', 'HEAD')
+    fixture.prs.push({
+      number: 1,
+      title: 'improve: create parent layer',
+      body: 'Parent PR body.\n',
+      baseRefName: 'main',
+      headRefName: 'feature-parent',
+      headRepositoryOwner: { login: 'owner' },
+      state: 'OPEN',
+      url: 'https://example/1'
+    })
+    await writeFile(join(fixture.repo, 'package.json'), '{"child":true}\n')
+
+    const workflow = await executeCommitWorkflow(
+      fixture.ctx,
+      'fix',
+      'add the child behavior',
+      {
+        generateProse: async (input) => {
+          assert.equal(input.mode, 'stacked')
+          assert.equal(input.existingPr, null)
+          assert.equal(input.stackedBasePr.number, 1)
+          assert.equal(input.baseBranch, 'feature-parent')
+          assert.equal(input.commits, '')
+          return modelProseFor(input, {
+            commitType: 'fix',
+            commitMessage: 'fix: add child behavior',
+            prType: 'fix',
+            prHeadline: 'add child behavior',
+            publicSummary: 'Child behavior now works correctly.'
+          })
+        }
+      },
+      'stacked'
+    )
+
+    assert.equal(workflow.status, 'committed')
+    assert.equal(
+      await git(fixture.repo, 'branch', '--show-current'),
+      'fix/add-child-behavior'
+    )
+    assert.equal(await git(fixture.repo, 'rev-parse', 'HEAD^'), parentSha)
+    assert.equal(
+      await git(fixture.repo, 'rev-parse', 'origin/feature-parent'),
+      parentSha
+    )
+    assert.equal(fixture.prs.length, 2)
+    assert.equal(fixture.prs[1].headRefName, 'fix/add-child-behavior')
+    assert.equal(fixture.prs[1].baseRefName, 'feature-parent')
+    assert.equal(fixture.prs[0].body, 'Parent PR body.\n')
+    const stackCommands = fixture.calls
+      .filter(({ command }) => command === 'gh')
+      .map(({ args }) => args.join(' '))
+      .filter((line) => line.startsWith('stack '))
+    assert.deepEqual(stackCommands, [
+      'stack view --json',
+      'stack checkout https://example/1',
+      'stack init --base main feature-parent',
+      'stack view --json',
+      'stack add fix/add-child-behavior',
+      'stack submit --auto'
+    ])
   } finally {
     await fixture.cleanup()
   }

@@ -20,6 +20,7 @@ export const CHANGE_TYPES = [
   'internal'
 ] as const
 export type ChangeType = (typeof CHANGE_TYPES)[number]
+export type CommitMode = 'normal' | 'stacked'
 type ResolvedChangeType = Exclude<ChangeType, 'auto'>
 
 const RESOLVED_CHANGE_TYPES = ['feat', 'fix', 'improve', 'internal'] as const
@@ -67,6 +68,7 @@ export interface CommitProse {
 }
 
 export interface ProseInput {
+  mode: CommitMode
   selectedChangeType: ChangeType
   userContext: string
   changes: ChangeCandidate[]
@@ -75,6 +77,7 @@ export interface ProseInput {
   untrackedMaterial: string
   commits: string
   existingPr: PullRequest | null
+  stackedBasePr: PullRequest | null
   baseBranch: string
   packageScope: string | null
 }
@@ -134,6 +137,28 @@ interface WorktreeSnapshot {
   prospectiveTree: string | null
 }
 
+interface GhStackBranch {
+  name: string
+  prNumber: number | null
+  isMerged: boolean
+  isQueued: boolean
+  needsRebase: boolean
+}
+
+interface GhStackView {
+  trunk: string
+  currentBranch: string
+  branches: GhStackBranch[]
+}
+
+interface StackPublication {
+  repository: GitHubRepository
+  basePr: PullRequest
+  existingBranchShas: Map<string, string>
+  existingPrSnapshots: PullRequest[]
+  newBranch: string
+}
+
 interface InspectedState {
   branch: string
   rawStatus: string
@@ -158,7 +183,8 @@ export async function executeCommitWorkflow(
   suppliedContext: WorkflowContext,
   selectedChangeType: ChangeType,
   userContext: string,
-  dependencies: WorkflowDependencies
+  dependencies: WorkflowDependencies,
+  mode: CommitMode = 'normal'
 ): Promise<WorkflowResult> {
   dependencies.onProgress?.('Finding repository root')
   const root = await output(suppliedContext, 'git', [
@@ -171,6 +197,11 @@ export async function executeCommitWorkflow(
   dependencies.onProgress?.('Inspecting Git and GitHub state')
   let state = await inspectState(ctx)
 
+  if (mode === 'stacked' && !state.existingPr) {
+    throw new Error(
+      '/commit stacked requires the current branch to have one open pull request'
+    )
+  }
   if (!state.rawStatus && state.aheadCount === 0 && !state.existingPr) {
     dependencies.onProgress?.('No changes to commit')
     return result('no_changes', null, null, notes)
@@ -179,24 +210,31 @@ export async function executeCommitWorkflow(
   let createdCommit: string | null = null
   let latestPr = state.existingPr
   let publishSha = state.headSha
+  let stackPublication: StackPublication | null = null
 
   try {
     dependencies.onProgress?.('Generating commit and PR text')
+    const inputPackageScope =
+      mode === 'stacked'
+        ? await detectPackageScope(ctx, candidatePaths(state.changes))
+        : state.packageScope
     const prose = validateCommitProse(
       await dependencies.generateProse({
+        mode,
         selectedChangeType,
         userContext,
         changes: state.changes,
         status: state.displayStatus,
-        diff: state.diff,
+        diff: mode === 'stacked' ? state.snapshot.trackedDiff : state.diff,
         untrackedMaterial: state.untrackedMaterial,
-        commits: state.commits,
-        existingPr: state.existingPr,
-        baseBranch: state.baseBranch,
-        packageScope: state.packageScope
+        commits: mode === 'stacked' ? '' : state.commits,
+        existingPr: mode === 'stacked' ? null : state.existingPr,
+        stackedBasePr: mode === 'stacked' ? state.existingPr : null,
+        baseBranch: mode === 'stacked' ? state.branch : state.baseBranch,
+        packageScope: inputPackageScope
       }),
       selectedChangeType,
-      state.packageScope,
+      inputPackageScope,
       state.changes
     )
     const selectedChanges = selectChanges(state.changes, prose.stageChangeIds)
@@ -204,7 +242,7 @@ export async function executeCommitWorkflow(
     const selectedPaths = candidatePaths(selectedChanges)
     const ignoredPaths = candidatePaths(ignoredChanges)
     const packageScope = await detectPackageScope(ctx, [
-      ...state.committedFiles,
+      ...(mode === 'stacked' ? [] : state.committedFiles),
       ...selectedPaths
     ])
     prose.prTitle = formatPullRequestTitle(
@@ -222,7 +260,45 @@ export async function executeCommitWorkflow(
     dependencies.onProgress?.('Rechecking repository state')
     await assertSnapshotUnchanged(ctx, state.snapshot)
 
-    if (
+    if (mode === 'stacked') {
+      if (!selectedChanges.length) {
+        dependencies.onProgress?.('No relevant changes selected')
+        return result('no_changes', null, null, notes)
+      }
+      const basePr = state.existingPr
+      if (!basePr) {
+        throw new Error(
+          '/commit stacked requires the current branch to have one open pull request'
+        )
+      }
+      const currentBasePr = selectPullRequestForSnapshot(
+        await queryPullRequests(ctx, state.branch, state.repository),
+        'during stacked branch creation'
+      )
+      assertPullRequestSnapshotUnchanged(
+        basePr,
+        currentBasePr,
+        'during stacked branch creation'
+      )
+      dependencies.onProgress?.(`Adding a layer above PR #${basePr.number}`)
+      const stacked = await createStackedBranch(
+        ctx,
+        state,
+        basePr,
+        prose.commitType,
+        prose.commitMessage
+      )
+      notes.push(`stacked ${stacked.branch} on ${state.branch}`)
+      stackPublication = stacked.publication
+      state = {
+        ...state,
+        branch: stacked.branch,
+        baseBranch: basePr.headRefName,
+        existingPr: null,
+        snapshot: { ...state.snapshot, branch: stacked.branch }
+      }
+      latestPr = null
+    } else if (
       state.branch === state.repository.defaultBranchRef.name &&
       (selectedChanges.length > 0 || state.aheadCount > 0)
     ) {
@@ -317,6 +393,12 @@ export async function executeCommitWorkflow(
     } else {
       dependencies.onProgress?.(`Pull request #${existingPr.number} is current`)
       finalPr = existingPr
+    }
+
+    if (stackPublication) {
+      dependencies.onProgress?.('Publishing GitHub stack')
+      await publishStack(ctx, stackPublication, finalPr)
+      notes.push(`linked PR #${finalPr.number} into the GitHub stack`)
     }
 
     if (
@@ -1438,7 +1520,302 @@ function workspacePatternMatches(pattern: string, directory: string) {
   return new RegExp(`^${escaped.replace(/\/$/, '')}$`).test(directory)
 }
 
-async function createBranch(
+async function createStackedBranch(
+  ctx: WorkflowContext,
+  state: InspectedState,
+  basePr: PullRequest,
+  type: ResolvedChangeType,
+  commitMessage: string
+) {
+  const publishedBase = await optionalOutput(ctx, 'git', [
+    'rev-parse',
+    '--verify',
+    `origin/${state.branch}`
+  ])
+  if (publishedBase !== state.headSha) {
+    throw new Error(
+      `Current PR branch ${state.branch} is not published at the inspected HEAD; run /commit before adding a stacked layer`
+    )
+  }
+
+  let stackView = await optionalStackView(ctx)
+  if (!stackView) {
+    const imported = await ctx.exec('gh', ['stack', 'checkout', basePr.url], {
+      cwd: ctx.cwd
+    })
+    if (imported.code !== 0) {
+      if (!/not part of a stack/i.test(imported.stderr)) {
+        throw new Error(
+          `gh stack checkout failed: ${imported.stderr.trim() || `exit ${imported.code}`}`
+        )
+      }
+      await run(ctx, 'gh', [
+        'stack',
+        'init',
+        '--base',
+        basePr.baseRefName,
+        state.branch
+      ])
+    }
+    stackView = await requireStackView(ctx)
+  }
+  validateStackTop(stackView, state.branch)
+  const existingStack = await capturePublishedStack(
+    ctx,
+    stackView,
+    state.repository
+  )
+  const branch = await availableBranchName(ctx, type, commitMessage)
+  await run(ctx, 'gh', ['stack', 'add', branch])
+  await assertSnapshotUnchanged(ctx, {
+    ...state.snapshot,
+    branch
+  })
+  return {
+    branch,
+    publication: {
+      repository: state.repository,
+      basePr,
+      existingBranchShas: existingStack.branchShas,
+      existingPrSnapshots: existingStack.pullRequests,
+      newBranch: branch
+    } satisfies StackPublication
+  }
+}
+
+async function optionalStackView(
+  ctx: WorkflowContext
+): Promise<GhStackView | null> {
+  const response = await ctx.exec('gh', ['stack', 'view', '--json'], {
+    cwd: ctx.cwd
+  })
+  if (response.code === 0) return parseStackView(response.stdout)
+  if (/not part of a stack/i.test(response.stderr)) return null
+  throw new Error(
+    `gh stack view failed: ${response.stderr.trim() || `exit ${response.code}`}`
+  )
+}
+
+async function requireStackView(ctx: WorkflowContext) {
+  const stack = await optionalStackView(ctx)
+  if (!stack) throw new Error('gh stack did not track the current branch')
+  return stack
+}
+
+function parseStackView(text: string): GhStackView {
+  const value = parseJson<unknown>(text, 'gh stack view')
+  if (
+    !isRecord(value) ||
+    typeof value.trunk !== 'string' ||
+    typeof value.currentBranch !== 'string' ||
+    !Array.isArray(value.branches)
+  ) {
+    throw new Error('gh stack view returned an invalid stack')
+  }
+  const branches = value.branches.map((branch) => {
+    if (
+      !isRecord(branch) ||
+      typeof branch.name !== 'string' ||
+      typeof branch.isMerged !== 'boolean' ||
+      typeof branch.isQueued !== 'boolean' ||
+      typeof branch.needsRebase !== 'boolean'
+    ) {
+      throw new Error('gh stack view returned an invalid branch')
+    }
+    const prNumber =
+      branch.pr === undefined
+        ? null
+        : isRecord(branch.pr) && Number.isInteger(branch.pr.number)
+          ? (branch.pr.number as number)
+          : undefined
+    if (prNumber === undefined) {
+      throw new Error('gh stack view returned an invalid pull request')
+    }
+    return {
+      name: branch.name,
+      prNumber,
+      isMerged: branch.isMerged,
+      isQueued: branch.isQueued,
+      needsRebase: branch.needsRebase
+    }
+  })
+  return {
+    trunk: value.trunk,
+    currentBranch: value.currentBranch,
+    branches
+  }
+}
+
+function validateStackTop(stack: GhStackView, branch: string) {
+  const current = stack.branches.find((item) => item.name === branch)
+  if (
+    stack.currentBranch !== branch ||
+    !current ||
+    stack.branches.at(-1)?.name !== branch
+  ) {
+    throw new Error(
+      `/commit stacked requires ${branch} to be the top branch reported by gh stack`
+    )
+  }
+  if (current.isMerged || current.isQueued) {
+    throw new Error(
+      `/commit stacked cannot add a layer above a ${current.isMerged ? 'merged' : 'queued'} pull request`
+    )
+  }
+}
+
+async function capturePublishedStack(
+  ctx: WorkflowContext,
+  stack: GhStackView,
+  repository: GitHubRepository
+) {
+  const branchShas = new Map<string, string>()
+  const pullRequests: PullRequest[] = []
+  let activeBase = stack.trunk
+  for (const branch of stack.branches) {
+    if (branch.isMerged || branch.isQueued) continue
+    if (branch.prNumber === null) {
+      throw new Error(
+        `Stack branch ${branch.name} has no pull request; run gh stack submit before /commit stacked`
+      )
+    }
+    const [local, remote, prs] = await Promise.all([
+      optionalOutput(ctx, 'git', ['rev-parse', '--verify', branch.name]),
+      optionalOutput(ctx, 'git', [
+        'rev-parse',
+        '--verify',
+        `origin/${branch.name}`
+      ]),
+      queryPullRequests(ctx, branch.name, repository)
+    ])
+    if (!local || local !== remote) {
+      throw new Error(
+        `Stack branch ${branch.name} is not fully published; run gh stack push before /commit stacked`
+      )
+    }
+    const pr = selectOpenPullRequest(prs)
+    if (!pr || pr.number !== branch.prNumber || pr.baseRefName !== activeBase) {
+      throw new Error(
+        `Stack branch ${branch.name} is not published as a PR based on ${activeBase}; run gh stack submit before /commit stacked`
+      )
+    }
+    branchShas.set(branch.name, local)
+    pullRequests.push(pr)
+    activeBase = branch.name
+  }
+  return { branchShas, pullRequests }
+}
+
+async function publishStack(
+  ctx: WorkflowContext,
+  publication: StackPublication,
+  childPr: PullRequest
+) {
+  const expected = new Map(publication.existingBranchShas)
+  const childSha = await output(ctx, 'git', [
+    'rev-parse',
+    publication.newBranch
+  ])
+  expected.set(publication.newBranch, childSha)
+  await assertPublishedBranchShas(ctx, expected)
+  await run(ctx, 'gh', ['stack', 'submit', '--auto'])
+  if (
+    (await output(ctx, 'git', ['branch', '--show-current'])) !==
+    publication.newBranch
+  ) {
+    throw new Error('gh stack submit changed the current branch unexpectedly')
+  }
+  await assertPublishedBranchShas(ctx, expected)
+  const currentChildPr = selectPullRequestForSnapshot(
+    await queryPullRequests(ctx, publication.newBranch, publication.repository),
+    'during gh stack submit'
+  )
+  assertPullRequestSnapshotUnchanged(
+    childPr,
+    currentChildPr,
+    'during gh stack submit'
+  )
+  for (const expectedPr of publication.existingPrSnapshots) {
+    const currentPr = selectPullRequestForSnapshot(
+      await queryPullRequests(
+        ctx,
+        expectedPr.headRefName,
+        publication.repository
+      ),
+      'during gh stack submit'
+    )
+    assertPullRequestSnapshotUnchanged(
+      expectedPr,
+      currentPr,
+      'during gh stack submit'
+    )
+  }
+  await assertRemoteStackLinked(
+    ctx,
+    publication.repository,
+    publication.basePr.number,
+    childPr.number
+  )
+}
+
+async function assertRemoteStackLinked(
+  ctx: WorkflowContext,
+  repository: GitHubRepository,
+  basePrNumber: number,
+  childPrNumber: number
+) {
+  const value = parseJson<unknown>(
+    await output(ctx, 'gh', [
+      'api',
+      `repos/${repository.nameWithOwner}/stacks?pull_request=${childPrNumber}`
+    ]),
+    'GitHub stack lookup'
+  )
+  if (!Array.isArray(value) || value.length !== 1) {
+    throw new Error(
+      `gh stack submit did not place PR #${childPrNumber} in exactly one GitHub stack`
+    )
+  }
+  const stack = value[0]
+  if (!isRecord(stack) || !Array.isArray(stack.pull_requests)) {
+    throw new Error('GitHub returned an invalid stack after gh stack submit')
+  }
+  const numbers = stack.pull_requests.map((pullRequest) =>
+    isRecord(pullRequest) && Number.isInteger(pullRequest.number)
+      ? (pullRequest.number as number)
+      : null
+  )
+  const childIndex = numbers.indexOf(childPrNumber)
+  if (
+    numbers.includes(null) ||
+    childIndex < 1 ||
+    numbers[childIndex - 1] !== basePrNumber ||
+    childIndex !== numbers.length - 1
+  ) {
+    throw new Error(
+      `GitHub stack does not place PR #${childPrNumber} directly above PR #${basePrNumber}`
+    )
+  }
+}
+
+async function assertPublishedBranchShas(
+  ctx: WorkflowContext,
+  expected: Map<string, string>
+) {
+  for (const [branch, sha] of expected) {
+    const [local, remote] = await Promise.all([
+      optionalOutput(ctx, 'git', ['rev-parse', '--verify', branch]),
+      optionalOutput(ctx, 'git', ['rev-parse', '--verify', `origin/${branch}`])
+    ])
+    if (local !== sha || remote !== sha) {
+      throw new Error(
+        `gh stack changed ${branch} from its inspected commit; refusing unverified stack state`
+      )
+    }
+  }
+}
+
+async function availableBranchName(
   ctx: WorkflowContext,
   type: ResolvedChangeType,
   commitMessage: string
@@ -1466,6 +1843,15 @@ async function createBranch(
   ])
   if (localExists.code === 0 || remoteExists.code === 0)
     throw new Error(`Branch already exists: ${branch}`)
+  return branch
+}
+
+async function createBranch(
+  ctx: WorkflowContext,
+  type: ResolvedChangeType,
+  commitMessage: string
+) {
+  const branch = await availableBranchName(ctx, type, commitMessage)
   await run(ctx, 'git', ['switch', '-c', branch])
   return branch
 }

@@ -12,6 +12,7 @@ import {
   executeCommitWorkflow,
   WorkflowFailure,
   type ChangeType,
+  type CommitMode,
   type ProseInput,
   type WorkflowResult
 } from './commit-workflow.ts'
@@ -38,6 +39,7 @@ type CommitDisplayStatus = 'ok' | 'cancelled' | 'failed'
 
 interface CommitResultDetails {
   changeType?: ChangeType
+  mode?: CommitMode
   userContext?: string
   status?: CommitDisplayStatus
 }
@@ -87,7 +89,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
       const container = new Container()
       container.addChild(
         new Text(
-          `${statusLabel} ${theme.fg('toolTitle', theme.bold('commit'))}${details?.changeType ? ` ${theme.fg('accent', details.changeType)}` : ''}`,
+          `${statusLabel} ${theme.fg('toolTitle', theme.bold('commit'))}${details?.mode === 'stacked' ? ` ${theme.fg('accent', 'stacked')}` : ''}${details?.changeType ? ` ${theme.fg('accent', details.changeType)}` : ''}`,
           0,
           0
         )
@@ -105,7 +107,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
 
   pi.registerCommand('commit', {
     description:
-      'Commit changes and create/update PR. Usage: /commit <changeType> <what was done>',
+      'Commit changes and create/update PR. Use /commit stacked to add a PR above the current PR.',
     getArgumentCompletions: getCommitArgumentCompletions,
     handler: async (args, ctx) => {
       if (commitCommandPending || commitWorkflowRunning) {
@@ -114,7 +116,11 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
       }
 
       commitCommandPending = true
-      let parsed: { changeType: ChangeType; context: string } | null
+      let parsed: {
+        mode: CommitMode
+        changeType: ChangeType
+        context: string
+      } | null
       try {
         parsed = await resolveChangeTypeAndContext(args, ctx)
         if (!parsed) return
@@ -134,8 +140,11 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
       }
       if (!parsed) return
 
-      const progress = createCommitProgress(ctx, parsed.changeType)
-      ctx.ui.notify(`Starting /commit (${parsed.changeType})`, 'info')
+      const progress = createCommitProgress(ctx, parsed.changeType, parsed.mode)
+      ctx.ui.notify(
+        `Starting /commit${parsed.mode === 'stacked' ? ' stacked' : ''} (${parsed.changeType})`,
+        'info'
+      )
       try {
         const workflow = await executeCommitWorkflow(
           { cwd: ctx.cwd, exec: pi.exec.bind(pi) },
@@ -150,12 +159,14 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
                 createConversationCheckpoint(pi, ctx)
               ),
             onProgress: progress.update
-          }
+          },
+          parsed.mode
         )
         progress.finish()
         const summary = formatWorkflowResult(workflow, progress.activity())
         await sendResult(ctx, pi, summary, {
           changeType: parsed.changeType,
+          mode: parsed.mode,
           userContext: parsed.context,
           status: workflow.status === 'failed' ? 'failed' : 'ok'
         })
@@ -182,6 +193,7 @@ export default function noiceChangelogExtension(pi: ExtensionAPI) {
         )
         await sendResult(ctx, pi, summary, {
           changeType: parsed.changeType,
+          mode: parsed.mode,
           userContext: parsed.context,
           status: 'failed'
         })
@@ -364,14 +376,15 @@ interface ProgressEntry {
 
 function createCommitProgress(
   ctx: ExtensionCommandContext,
-  changeType: ChangeType
+  changeType: ChangeType,
+  mode: CommitMode
 ) {
   const entries: ProgressEntry[] = []
 
   const render = () => {
     const visible = entries.slice(-8)
     const plainLines = [
-      `/commit ${changeType}`,
+      `/commit${mode === 'stacked' ? ' stacked' : ''} ${changeType}`,
       ...visible.map((entry, index) => {
         const active = index === visible.length - 1 && !entry.finishedAt
         const elapsed = formatElapsed(
@@ -389,7 +402,12 @@ function createCommitProgress(
       (_tui, theme) =>
         new Text(
           [
-            theme.fg('toolTitle', theme.bold(`/commit ${changeType}`)),
+            theme.fg(
+              'toolTitle',
+              theme.bold(
+                `/commit${mode === 'stacked' ? ' stacked' : ''} ${changeType}`
+              )
+            ),
             ...visible.map((entry, index) => {
               const active = index === visible.length - 1 && !entry.finishedAt
               const elapsed = theme.fg(
@@ -453,25 +471,54 @@ function getCommitArgumentCompletions(prefix: string) {
   const trimmedStart = prefix.trimStart()
   const leadingWhitespace = prefix.slice(0, prefix.length - trimmedStart.length)
   const [firstWord = ''] = trimmedStart.split(/\s+/)
-  const isTypingDescription = /^\S+\s/.test(trimmedStart)
-  if (!isTypingDescription) {
-    const matches = CHANGE_TYPE_OPTIONS.filter((option) =>
-      option.type.startsWith(firstWord)
-    )
-    return matches.length
-      ? matches.map((option) => ({
-          value: `${leadingWhitespace}${option.type} `,
+  const hasFirstSeparator = /^\S+\s/.test(trimmedStart)
+  if (!hasFirstSeparator) {
+    const modes = [
+      ...CHANGE_TYPE_OPTIONS.map((option) => ({
+        value: option.type,
+        label: option.label
+      })),
+      {
+        value: 'stacked',
+        label: 'stacked - Add selected changes above the current pull request'
+      }
+    ].filter((option) => option.value.startsWith(firstWord))
+    return modes.length
+      ? modes.map((option) => ({
+          value: `${leadingWhitespace}${option.value} `,
           label: option.label
         }))
       : null
   }
+
+  if (firstWord === 'stacked') {
+    const remainder = trimmedStart.slice('stacked'.length).trimStart()
+    const [type = ''] = remainder.split(/\s+/)
+    if (!/^\S+\s/.test(remainder)) {
+      const matches = CHANGE_TYPE_OPTIONS.filter((option) =>
+        option.type.startsWith(type)
+      )
+      return matches.length
+        ? matches.map((option) => ({
+            value: `${leadingWhitespace}stacked ${option.type} `,
+            label: option.label
+          }))
+        : null
+    }
+    if (!isChangeType(type)) return null
+    return contextCompletion(prefix, remainder.slice(type.length).trim())
+  }
+
   if (!isChangeType(firstWord)) return null
-  const whatWasDone = trimmedStart.slice(firstWord.length).trim()
+  return contextCompletion(prefix, trimmedStart.slice(firstWord.length).trim())
+}
+
+function contextCompletion(prefix: string, context: string) {
   return [
     {
       value: prefix,
-      label: whatWasDone
-        ? `What was done: "${whatWasDone}"`
+      label: context
+        ? `What was done: "${context}"`
         : 'Say what was done — rough wording is fine; leave blank to infer from the diff'
     }
   ]
@@ -483,8 +530,16 @@ async function resolveChangeTypeAndContext(
 ) {
   const trimmedArgs = args?.trim() ?? ''
   const [firstWord = '', ...rest] = trimmedArgs.split(/\s+/)
-  if (isChangeType(firstWord))
-    return { changeType: firstWord, context: rest.join(' ').trim() }
+  const mode: CommitMode = firstWord === 'stacked' ? 'stacked' : 'normal'
+  const modeArgs = mode === 'stacked' ? rest : [firstWord, ...rest]
+  const [possibleType = '', ...contextWords] = modeArgs
+  if (isChangeType(possibleType)) {
+    return {
+      mode,
+      changeType: possibleType,
+      context: contextWords.join(' ').trim()
+    }
+  }
 
   const selected = await ctx.ui.select(
     'Change type',
@@ -494,7 +549,13 @@ async function resolveChangeTypeAndContext(
   const option = CHANGE_TYPE_OPTIONS.find((item) =>
     selected.startsWith(item.type)
   )
-  return option ? { changeType: option.type, context: trimmedArgs } : null
+  return option
+    ? {
+        mode,
+        changeType: option.type,
+        context: modeArgs.join(' ').trim()
+      }
+    : null
 }
 
 function isChangeType(value: string): value is ChangeType {

@@ -157,13 +157,16 @@ test('prose turn branches from and returns to the active conversation', async ()
     pi,
     ctx,
     {
+      mode: 'normal',
       selectedChangeType: 'internal',
       userContext: 'reuse context',
+      changes: [],
       status: ' M file.ts',
       diff: 'diff',
       untrackedMaterial: '',
       commits: '',
       existingPr: null,
+      stackedBasePr: null,
       baseBranch: 'main',
       packageScope: 'changelog'
     },

@@ -63,8 +63,10 @@ An existing open PR keeps its base branch. For a new PR, base configuration is r
 
 Set a base explicitly with, for example, `git config branch.my-branch.noice-base staging`. Ambiguous bases and closed, merged, or multiple matching PRs fail without creating a PR. Rerunning on a clean branch that is ahead of its base safely pushes missing commits and creates, updates, or leaves the single matching PR as appropriate. Existing manual PR sections are retained; `/commit` deterministically owns `Summary`, `Changelog`, and `Verification`.
 
+`/commit stacked [changeType] [what was done]` puts the selected dirty changes in a new layer above the current branch's open PR. It uses the `gh stack` CLI as the stack authority: importing or initializing local stack tracking, adding and checking out the child branch, and submitting the already-created PR through `gh stack submit --auto`. Existing stack branches must already be published, and the current PR must be the top layer. Plain `/commit` continues to update the current branch and PR.
+
 ## Requirements and side effects
 
-- Git and an authenticated [GitHub CLI](https://cli.github.com/) are required for `/commit`, `/unreleased`, and `/release-notes`.
+- Git and an authenticated [GitHub CLI](https://cli.github.com/) are required for `/commit`, `/unreleased`, and `/release-notes`. `/commit stacked` additionally requires the [`github/gh-stack`](https://github.com/github/gh-stack) CLI extension.
 - `/commit` can fetch remote refs, create a branch, stage model-selected changes, commit, push, and create or update a PR. The model returns only strict selection/prose JSON; no shell or repository tools are exposed to it, and the extension performs every mutation.
 - `/unreleased` fetches tags but changes no source or GitHub state. `/release-notes` overwrites its two output files.
