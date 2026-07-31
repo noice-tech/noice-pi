@@ -33,7 +33,6 @@ const packageSpecifications = {
       'package/package.json',
       'package/README.md',
       'package/LICENSE',
-      'package/extensions/changelog/index.ts',
       'package/prompts/release-notes.md',
       'package/prompts/setup-release-notes-style.md',
       'package/prompts/unreleased.md',
@@ -49,7 +48,7 @@ const packageSpecifications = {
     ],
     allowedForbiddenPrefixes: ['package/node_modules/pi-commit/'],
     piResources: {
-      extensions: ['./extensions/changelog/index.ts'],
+      extensions: ['./node_modules/pi-commit/extensions/commit/index.ts'],
       prompts: ['./prompts/*.md']
     },
     exactArchive: true,

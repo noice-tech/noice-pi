@@ -8,7 +8,7 @@ Capture release intent in each PR, preview unreleased work, and generate public 
 pi install npm:@noice-tech/pi-changelog
 ```
 
-`pi-commit` is bundled, so this one install still provides `/commit` and `/commit-config`. If both packages are installed directly, their shared registration remains a single unsuffixed command. Commit `.pi/settings.json` when collaborators should use the package too.
+`pi-commit` is bundled and declared as a second Pi extension, so this one install still provides `/commit` and `/commit-config`. If both packages are installed directly, their shared registration remains a single unsuffixed command. Commit `.pi/settings.json` when collaborators should use the package too.
 
 ## Commands
 

@@ -11,7 +11,6 @@
     "release-notes"
   ],
   "files": [
-    "extensions/changelog/index.ts",
     "prompts/**/*.md",
     "README.md",
     "LICENSE"
@@ -32,7 +31,6 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit --allowImportingTsExtensions --moduleResolution bundler --module ESNext --target ES2022 --skipLibCheck extensions/changelog/index.ts",
     "test": "node --test test/*.test.mjs && node ../../scripts/smoke-pack.mjs @noice-tech/pi-changelog packages/changelog"
   },
   "dependencies": {
@@ -45,15 +43,9 @@
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },
-  "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.80.10",
-    "@earendil-works/pi-tui": "0.80.10",
-    "@types/node": "22.20.1",
-    "typescript": "6.0.3"
-  },
   "pi": {
     "extensions": [
-      "./extensions/changelog/index.ts"
+      "./node_modules/pi-commit/extensions/commit/index.ts"
     ],
     "prompts": [
       "./prompts/*.md"

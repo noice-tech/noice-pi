@@ -4,20 +4,17 @@ import { fileURLToPath } from 'node:url'
 
 import { discoverAndLoadExtensions } from '@earendil-works/pi-coding-agent'
 
-import changelogExtension from '../../changelog/extensions/changelog/index.ts'
 import piCommitExtension from '../extensions/commit/index.ts'
 import { registerCommit } from '../extensions/commit/register.ts'
 
-test('registration is idempotent across direct, composed, and separately loaded extension APIs', async () => {
+test('registration is idempotent across direct and separately loaded extension APIs', async () => {
   const harness = createRegistrationHarness()
   const directApi = harness.createApi()
-  const changelogApi = harness.createApi()
   const copiedApi = harness.createApi()
 
   registerCommit(directApi)
   registerCommit(directApi)
   piCommitExtension(directApi)
-  changelogExtension(changelogApi)
   const copy = await import(
     `../extensions/commit/register.ts?copy=${Date.now()}`
   )
@@ -29,27 +26,20 @@ test('registration is idempotent across direct, composed, and separately loaded 
   assert.equal(harness.handlerCount('context'), 1)
 })
 
-test('composition also deduplicates when the changelog adapter loads first', () => {
-  const harness = createRegistrationHarness()
-
-  changelogExtension(harness.createApi())
-  piCommitExtension(harness.createApi())
-
-  assert.deepEqual(harness.commandNames, ['commit-config', 'commit'])
-  assert.equal(harness.rendererTypes.length, 1)
-})
-
-test('the real Pi loader registers one command set in either package order', async () => {
+test('the real Pi loader registers one command set with native package composition in either order', async () => {
   const commitPath = fileURLToPath(
     new URL('../extensions/commit/index.ts', import.meta.url)
   )
-  const changelogPath = fileURLToPath(
-    new URL('../../changelog/extensions/changelog/index.ts', import.meta.url)
+  const composedCommitPath = fileURLToPath(
+    new URL(
+      '../../changelog/node_modules/pi-commit/extensions/commit/index.ts',
+      import.meta.url
+    )
   )
 
   for (const paths of [
-    [commitPath, changelogPath],
-    [changelogPath, commitPath]
+    [commitPath, composedCommitPath],
+    [composedCommitPath, commitPath]
   ]) {
     const loaded = await discoverAndLoadExtensions(paths, process.cwd())
     assert.deepEqual(loaded.errors, [])
