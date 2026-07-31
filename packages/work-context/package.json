@@ -1,6 +1,6 @@
 {
   "name": "@noice-tech/pi-work-context",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "Show session, Git, pull request, and CI context in every Pi terminal.",
   "type": "module",
   "license": "MIT",

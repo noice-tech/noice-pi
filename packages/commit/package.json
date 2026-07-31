@@ -1,6 +1,6 @@
 {
   "name": "@noice-tech/pi-commit",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "Commit, push, and open pull requests without interrupting your Pi session.",
   "type": "module",
   "license": "MIT",
