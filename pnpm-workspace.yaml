@@ -1,6 +1,10 @@
 packages:
   - 'packages/*'
 
+# pnpm can include workspace packages listed in bundledDependencies only with a
+# hoisted linker. pi-changelog bundles pi-commit so Pi can load it as one package.
+nodeLinker: hoisted
+
 allowBuilds:
   '@google/genai': true
   protobufjs: true

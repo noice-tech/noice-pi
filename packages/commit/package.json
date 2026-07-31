@@ -1,0 +1,59 @@
+{
+  "name": "pi-commit",
+  "version": "1.2.1",
+  "description": "Opinionated commit-to-PR workflow for Pi, with changelog-ready metadata and stacked pull requests.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "commit",
+    "git",
+    "pull-request",
+    "stacked-pr",
+    "changelog"
+  ],
+  "files": [
+    "extensions/**/*.ts",
+    "extensions/**/*.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./extensions/commit/register.ts"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noice-tech/noice-pi.git",
+    "directory": "packages/commit"
+  },
+  "homepage": "https://github.com/noice-tech/noice-pi/tree/main/packages/commit#readme",
+  "bugs": {
+    "url": "https://github.com/noice-tech/noice-pi/issues"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit --allowImportingTsExtensions --moduleResolution bundler --module ESNext --target ES2022 --skipLibCheck extensions/commit/index.ts",
+    "test": "node --test test/*.test.mjs && node ../../scripts/smoke-pack.mjs pi-commit packages/commit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.80.10",
+    "@earendil-works/pi-tui": "0.80.10",
+    "@types/node": "22.20.1",
+    "typescript": "6.0.3"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/commit/index.ts"
+    ]
+  }
+}

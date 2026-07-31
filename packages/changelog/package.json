@@ -1,7 +1,7 @@
 {
   "name": "@noice-tech/pi-changelog",
   "version": "1.2.1",
-  "description": "Pi changelog workflow for commits, pull requests, and public release notes.",
+  "description": "Pi workflows for changelog previews and privacy-safe public release notes.",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -11,8 +11,7 @@
     "release-notes"
   ],
   "files": [
-    "extensions/**/*.ts",
-    "extensions/**/*.md",
+    "extensions/changelog/index.ts",
     "prompts/**/*.md",
     "README.md",
     "LICENSE"
@@ -29,10 +28,19 @@
   "bugs": {
     "url": "https://github.com/noice-tech/noice-pi/issues"
   },
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit --allowImportingTsExtensions --moduleResolution bundler --module ESNext --target ES2022 --skipLibCheck extensions/changelog/index.ts",
     "test": "node --test test/*.test.mjs && node ../../scripts/smoke-pack.mjs @noice-tech/pi-changelog packages/changelog"
   },
+  "dependencies": {
+    "pi-commit": "workspace:*"
+  },
+  "bundledDependencies": [
+    "pi-commit"
+  ],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"

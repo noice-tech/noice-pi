@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
-import noiceChangelogExtension from '../extensions/changelog/index.ts'
+import piCommitExtension from '../extensions/commit/index.ts'
 
 const PROMPT_MESSAGE_TYPE = 'noice-changelog-commit-worker-prompt'
 const RESULT_MESSAGE_TYPE = 'noice-changelog-commit-result'
@@ -69,7 +69,7 @@ function registerCommitCommand({ selectedType = 'fix' } = {}) {
     }
   }
 
-  noiceChangelogExtension(pi)
+  piCommitExtension(pi)
   assert.ok(command, '/commit command should be registered')
   return { command, ctx, selections, sentMessages }
 }
@@ -154,12 +154,15 @@ test('/commit stacked without a type uses the existing selector', async () => {
 
 test('stacked worker prompt owns the complete gh stack protocol', async () => {
   const prompt = await readFile(
-    new URL('../extensions/changelog/worker-prompt.md', import.meta.url),
+    new URL('../extensions/commit/worker-prompt.md', import.meta.url),
     'utf8'
   )
 
   assert.match(prompt, /Selected mode:\s*\{\{mode\}\}/)
-  assert.match(prompt, /normal[^\n]+existing workflow[^\n]+unchanged/i)
+  assert.match(
+    prompt,
+    /normal[^\n]+pull request behavior `auto`[^\n]+normal PR workflow/i
+  )
   assert.match(prompt, /--state all/)
   assert.match(prompt, /headRepositoryOwner\.login[^\n]+case-insensitively/i)
   assert.match(prompt, /HEAD[^\n]+origin\/\$current_branch/)

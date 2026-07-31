@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import noiceChangelogExtension from '../extensions/changelog/index.ts'
+import piCommitExtension from '../extensions/commit/index.ts'
 
 const PROMPT_MESSAGE_TYPE = 'noice-changelog-commit-worker-prompt'
 
@@ -84,7 +84,7 @@ test('/commit keeps its duplicate guard during worker startup', async () => {
     }
   }
 
-  noiceChangelogExtension(pi)
+  piCommitExtension(pi)
   assert.ok(command, '/commit command should be registered')
 
   await command.handler('feat first', ctx)
