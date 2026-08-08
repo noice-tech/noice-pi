@@ -18,10 +18,7 @@ import {
 } from './command.ts'
 import {
   DEFAULT_COMMIT_CONFIG,
-  defaultConfigSource,
-  getCommitConfigPaths,
   loadCommitConfig,
-  writeCommitConfigFile,
   type ResolvedCommitConfig
 } from './config.ts'
 
@@ -191,13 +188,6 @@ export function registerCommit(pi: ExtensionAPI): void {
       return c
     }
   )
-
-  pi.registerCommand('commit-config', {
-    description: 'Configure pi-commit defaults for this user or project.',
-    handler: async (_args, ctx) => {
-      await configureCommit(ctx, runtime)
-    }
-  })
 
   pi.registerCommand('commit', {
     description:
@@ -504,92 +494,6 @@ async function loadConfigForContext(
     cwd: adaptable.cwd,
     projectTrusted: adaptable.isProjectTrusted?.() ?? false
   })
-}
-
-async function configureCommit(
-  ctx: ExtensionCommandContext,
-  runtime: CommitRuntime
-) {
-  const adaptable = ctx as ExtensionCommandContext & {
-    cwd?: string
-    isProjectTrusted?: () => boolean
-  }
-  const cwd = adaptable.cwd ?? process.cwd()
-  const paths = getCommitConfigPaths(cwd)
-
-  if (ctx.mode !== 'tui') {
-    ctx.ui.notify(
-      `Edit pi-commit configuration manually.\nUser: ${paths.user}\nProject: ${paths.project}\n\n${defaultConfigSource()}`,
-      'info'
-    )
-    return
-  }
-
-  const userLabel = `User — ${paths.user}`
-  const projectLabel = `Project — ${paths.project}`
-  const selectedScope = await ctx.ui.select('Configure pi-commit', [
-    userLabel,
-    projectLabel
-  ])
-  if (!selectedScope) return
-
-  const project = selectedScope === projectLabel
-  if (project && !(adaptable.isProjectTrusted?.() ?? false)) {
-    ctx.ui.notify(
-      'Project configuration is available only after trusting this project',
-      'error'
-    )
-    return
-  }
-
-  const path = project ? paths.project : paths.user
-  let draft: string
-  try {
-    draft = await readFile(path, 'utf8')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      ctx.ui.notify(`Could not read ${path}: ${errorMessage(error)}`, 'error')
-      return
-    }
-    draft = defaultConfigSource()
-  }
-
-  while (true) {
-    const edited = await ctx.ui.editor(`Edit ${path}`, draft)
-    if (edited === undefined) return
-    draft = edited
-
-    try {
-      await writeCommitConfigFile(path, draft)
-    } catch (error) {
-      const retry = await ctx.ui.select(
-        `Invalid pi-commit configuration: ${errorMessage(error)}`,
-        ['Edit again', 'Cancel']
-      )
-      if (retry !== 'Edit again') return
-      continue
-    }
-
-    try {
-      runtime.cachedConfig = await loadConfigForContext(ctx)
-    } catch (error) {
-      ctx.ui.notify(
-        `Saved ${path}, but another configuration file is invalid: ${errorMessage(error)}`,
-        'error'
-      )
-      return
-    }
-
-    const format =
-      runtime.cachedConfig.format === 'opinionated'
-        ? 'opinionated'
-        : `custom (${runtime.cachedConfig.format.changeTypes.map(({ name }) => name).join(', ')})`
-    ctx.ui.notify(
-      `Saved ${path}\nPull requests: ${runtime.cachedConfig.pullRequest}\nFormat: ${format}`,
-      'info'
-    )
-    return
-  }
 }
 
 function errorMessage(error: unknown) {
