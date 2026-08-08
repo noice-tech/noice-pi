@@ -18,7 +18,6 @@ Commit the resulting `.pi/settings.json` change to install it for collaborators 
 /commit fix prevent hidden tracks from rendering
 /commit --no-pr internal refresh test fixtures
 /commit stacked feat add export presets
-/commit-config
 ```
 
 | Command                            | What it does                                                      |
@@ -26,7 +25,6 @@ Commit the resulting `.pi/settings.json` change to install it for collaborators 
 | `/commit [type] [summary]`         | Commits and pushes, then creates or updates the pull request.     |
 | `/commit --no-pr [type] [summary]` | Commits and pushes without reading or changing a pull request.    |
 | `/commit stacked [type] [summary]` | Creates a child branch and PR above the current branch's open PR. |
-| `/commit-config`                   | Configures PR behavior and commit types for the user or project.  |
 
 Add `--pr` to override no-PR configuration for one run. Leave out the type to choose it interactively, or use `auto` to let the worker infer it. A supplied summary is the primary wording source and is checked against the current diff.
 
@@ -38,13 +36,41 @@ The built-in types are `feat`, `fix`, `improve`, and `internal`. Commits use `ty
 
 ## Configure
 
-`/commit-config` edits either `~/.pi/agent/pi-commit.json` or the trusted project's `.pi/pi-commit.json`. Project settings override user settings; command flags override both.
+Configuration is optional. Create a JSON file in either location:
 
-Use `"pullRequest": "never"` to skip PRs by default. Keep the opinionated format or define your own types:
+| Scope   | Path                         | Use it for                                       |
+| ------- | ---------------------------- | ------------------------------------------------ |
+| User    | `~/.pi/agent/pi-commit.json` | Defaults across your projects.                   |
+| Project | `.pi/pi-commit.json`         | Shared repository defaults in a trusted project. |
+
+Settings are merged individually: project values override user values, which override the built-in defaults. `/commit` flags such as `--pr` and `--no-pr` override configuration for one run. Project configuration is ignored until the project is trusted.
+
+### Pull request behavior
+
+To push commits without creating or updating pull requests by default:
 
 ```json
 {
-  "pullRequest": "never",
+  "pullRequest": "never"
+}
+```
+
+`pullRequest` accepts `"auto"` (the default) or `"never"`.
+
+### Commit format
+
+The default opinionated format uses `feat`, `fix`, `improve`, and `internal`. You can state it explicitly:
+
+```json
+{
+  "format": "opinionated"
+}
+```
+
+Or replace it with project-specific change types:
+
+```json
+{
   "format": {
     "changeTypes": [
       { "name": "docs", "description": "Documentation", "public": true },
@@ -55,7 +81,15 @@ Use `"pullRequest": "never"` to skip PRs by default. Keep the opinionated format
 }
 ```
 
-A public type requires a standalone changelog summary; a non-public type writes `None.`. Invalid configuration stops before any Git or GitHub changes.
+Each change type needs:
+
+- `name` — a unique lowercase identifier using letters, digits, and hyphens; `auto` and `stacked` are reserved
+- `description` — guidance shown when selecting and applying the type
+- `public` — whether the worker must write a standalone public changelog summary; non-public types write `None.`
+
+`instructions` tells the worker how to format commit and PR titles. It cannot override the commit workflow or public-summary rules.
+
+You may combine both settings in one file. Unknown fields, malformed JSON, and invalid values stop `/commit` before any Git or GitHub changes.
 
 ## Requirements
 

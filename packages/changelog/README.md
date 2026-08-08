@@ -8,14 +8,13 @@ Preview unreleased changes and write privacy-safe release notes in Pi.
 pi install -l npm:@noice-tech/pi-changelog
 ```
 
-This also installs [`@noice-tech/pi-commit`](https://github.com/noice-tech/noice-pi/tree/main/packages/commit), providing `/commit` and `/commit-config`. Commit the resulting `.pi/settings.json` change to install both for collaborators.
+This also installs [`@noice-tech/pi-commit`](https://github.com/noice-tech/noice-pi/tree/main/packages/commit), providing `/commit`. Commit the resulting `.pi/settings.json` change to install both for collaborators.
 
 ## Commands
 
 | Command                                        | What it does                                                                  |
 | ---------------------------------------------- | ----------------------------------------------------------------------------- |
 | `/commit [stacked] [options] [type] [summary]` | Commits and pushes changes and optionally creates or updates a pull request.  |
-| `/commit-config`                               | Configures PR behavior and commit types.                                      |
 | `/unreleased`                                  | Audits changes since the latest tag without changing project files or GitHub. |
 | `/release-notes <version \| tag \| from..to>`  | Writes public release notes and a private source audit.                       |
 | `/setup-release-notes-style [notes]`           | Configures repository-specific release-note voice and formatting.             |

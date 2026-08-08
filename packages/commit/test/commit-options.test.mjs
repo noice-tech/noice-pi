@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -145,71 +145,11 @@ test('invalid configuration fails before a worker starts', async () => {
   )
 })
 
-test('/commit-config cancellation and project trust checks do not write files', async () => {
-  const cancelledRoot = await mkdtemp(join(tmpdir(), 'pi-commit-cancel-'))
-  const cancelled = createHarness(cancelledRoot, {
-    mode: 'tui',
-    selections: [`Project — ${join(cancelledRoot, '.pi', 'pi-commit.json')}`]
-  })
-  await cancelled.commands.get('commit-config').handler('', cancelled.ctx)
-  await assert.rejects(
-    readFile(join(cancelledRoot, '.pi', 'pi-commit.json')),
-    /ENOENT/
-  )
-
-  const untrustedRoot = await mkdtemp(join(tmpdir(), 'pi-commit-untrusted-'))
-  const untrusted = createHarness(untrustedRoot, {
-    mode: 'tui',
-    trusted: false,
-    selections: [`Project — ${join(untrustedRoot, '.pi', 'pi-commit.json')}`],
-    edited: JSON.stringify(customConfig)
-  })
-  await untrusted.commands.get('commit-config').handler('', untrusted.ctx)
-  await assert.rejects(
-    readFile(join(untrustedRoot, '.pi', 'pi-commit.json')),
-    /ENOENT/
-  )
-  assert.ok(
-    untrusted.notifications.some(({ message }) =>
-      message.includes('only after trusting this project')
-    )
-  )
-})
-
-test('/commit-config writes and normalizes trusted project configuration', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'pi-commit-editor-'))
-  const harness = createHarness(root, {
-    mode: 'tui',
-    selections: [`Project — ${join(root, '.pi', 'pi-commit.json')}`],
-    edited: JSON.stringify(customConfig)
-  })
-
-  await harness.commands.get('commit-config').handler('', harness.ctx)
-
-  const saved = JSON.parse(
-    await readFile(join(root, '.pi', 'pi-commit.json'), 'utf8')
-  )
-  assert.deepEqual(saved, customConfig)
-  assert.ok(
-    harness.notifications.some(({ message }) => message.includes('Saved'))
-  )
-  assert.ok(
-    harness.commands
-      .get('commit')
-      .getArgumentCompletions('do')
-      .some(({ value }) => value === 'docs ')
-  )
-})
-
-function createHarness(
-  cwd,
-  { mode = 'json', selections = [], edited, trusted = true } = {}
-) {
+function createHarness(cwd) {
   const handlers = new Map()
   const commands = new Map()
   const sent = []
   const notifications = []
-  let selectionIndex = 0
 
   const pi = {
     on(name, handler) {
@@ -238,9 +178,9 @@ function createHarness(
 
   const ctx = {
     cwd,
-    mode,
+    mode: 'json',
     isProjectTrusted() {
-      return trusted
+      return true
     },
     isIdle() {
       return true
@@ -257,13 +197,6 @@ function createHarness(
       return { cancelled: false }
     },
     ui: {
-      async select(_title, options) {
-        const desired = selections[selectionIndex++]
-        return desired ?? options[0]
-      },
-      async editor() {
-        return edited
-      },
       notify(message, type) {
         notifications.push({ message, type })
       },

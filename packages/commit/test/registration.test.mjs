@@ -20,7 +20,7 @@ test('registration is idempotent across direct and separately loaded extension A
   )
   copy.registerCommit(copiedApi)
 
-  assert.deepEqual(harness.commandNames, ['commit-config', 'commit'])
+  assert.deepEqual(harness.commandNames, ['commit'])
   assert.equal(harness.rendererTypes.length, 1)
   assert.equal(harness.handlerCount('agent_end'), 1)
   assert.equal(harness.handlerCount('context'), 1)
@@ -45,7 +45,7 @@ test('the real Pi loader registers one command set with native package compositi
     assert.deepEqual(loaded.errors, [])
     assert.deepEqual(
       loaded.extensions.flatMap((extension) => [...extension.commands.keys()]),
-      ['commit-config', 'commit']
+      ['commit']
     )
   }
 })
@@ -60,12 +60,7 @@ test('shutdown clears ownership so a fresh extension runtime can register', () =
   }
 
   registerCommit(harness.createApi())
-  assert.deepEqual(harness.commandNames, [
-    'commit-config',
-    'commit',
-    'commit-config',
-    'commit'
-  ])
+  assert.deepEqual(harness.commandNames, ['commit', 'commit'])
 })
 
 test('an unrelated commit command does not suppress pi-commit', () => {
@@ -80,7 +75,6 @@ test('an unrelated commit command does not suppress pi-commit', () => {
     harness.commandNames.filter((name) => name === 'commit').length,
     2
   )
-  assert.ok(harness.commandNames.includes('commit-config'))
 })
 
 function createRegistrationHarness() {

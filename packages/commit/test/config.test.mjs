@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -8,9 +8,7 @@ import {
   DEFAULT_COMMIT_CONFIG,
   getChangeTypes,
   loadCommitConfig,
-  parseCommitConfig,
-  serializeCommitConfig,
-  writeCommitConfigFile
+  parseCommitConfig
 } from '../extensions/commit/config.ts'
 
 const customFormat = {
@@ -138,20 +136,4 @@ test('config validation rejects ambiguous or unsafe shapes', () => {
       ),
     /instructions must be a nonempty string/
   )
-})
-
-test('config writes atomically with stable normalized JSON', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'pi-commit-write-'))
-  const path = join(root, 'nested', 'pi-commit.json')
-  await writeCommitConfigFile(
-    path,
-    JSON.stringify({ format: customFormat, pullRequest: 'never' })
-  )
-
-  const actual = await readFile(path, 'utf8')
-  assert.equal(
-    actual,
-    serializeCommitConfig({ format: customFormat, pullRequest: 'never' })
-  )
-  assert.ok(actual.endsWith('\n'))
 })

@@ -1,7 +1,6 @@
 import { CONFIG_DIR_NAME, getAgentDir } from '@earendil-works/pi-coding-agent'
-import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 export type PullRequestBehavior = 'auto' | 'never'
 
@@ -165,44 +164,6 @@ export function getChangeTypes(
   return config.format === 'opinionated'
     ? OPINIONATED_CHANGE_TYPES
     : config.format.changeTypes
-}
-
-export function serializeCommitConfig(config: CommitConfigFile): string {
-  const validated = validateCommitConfig(config)
-  return `${JSON.stringify(validated, null, 2)}\n`
-}
-
-export async function writeCommitConfigFile(
-  path: string,
-  source: string
-): Promise<CommitConfigFile> {
-  const config = parseCommitConfig(source, path)
-  const serialized = serializeCommitConfig(config)
-  const parent = dirname(path)
-  const temporaryPath = join(
-    parent,
-    `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`
-  )
-
-  await mkdir(parent, { recursive: true })
-  try {
-    await writeFile(temporaryPath, serialized, {
-      encoding: 'utf8',
-      mode: 0o600
-    })
-    await rename(temporaryPath, path)
-  } finally {
-    await rm(temporaryPath, { force: true })
-  }
-
-  return config
-}
-
-export function defaultConfigSource(): string {
-  return serializeCommitConfig({
-    pullRequest: 'auto',
-    format: 'opinionated'
-  })
 }
 
 function validateFormat(value: unknown, path: string): CommitFormat {
