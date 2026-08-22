@@ -166,3 +166,132 @@ test('/commit selects immediately, then waits for the active turn', async () => 
     )
   )
 })
+
+test('/commit queues user input until it returns to the source branch', async () => {
+  const handlers = new Map()
+  const notifications = []
+  const sentUserMessages = []
+  let command
+  let leafId = 'source-leaf'
+  let workerStartedResolve
+  const workerStarted = new Promise((resolve) => {
+    workerStartedResolve = resolve
+  })
+
+  const pi = {
+    on(name, handler) {
+      handlers.set(name, [...(handlers.get(name) ?? []), handler])
+    },
+    registerCommand(name, registered) {
+      if (name === 'commit') command = registered
+    },
+    registerMessageRenderer() {},
+    sendMessage(message) {
+      if (message.customType === PROMPT_MESSAGE_TYPE) {
+        leafId = 'worker-leaf'
+        workerStartedResolve()
+      }
+    },
+    sendUserMessage(content, options) {
+      sentUserMessages.push({ content, options })
+    }
+  }
+
+  const ctx = {
+    mode: 'json',
+    isIdle() {
+      return true
+    },
+    waitForIdle() {
+      return Promise.resolve()
+    },
+    sessionManager: {
+      getLeafId() {
+        return leafId
+      }
+    },
+    async navigateTree(targetLeafId) {
+      leafId = targetLeafId
+      return { cancelled: false }
+    },
+    ui: {
+      async select() {
+        throw new Error('explicit change types should not open the selector')
+      },
+      notify(message, type) {
+        notifications.push({ message, type })
+      },
+      setWidget() {}
+    }
+  }
+
+  piCommitExtension(pi)
+  assert.ok(command, '/commit command should be registered')
+
+  const commandPromise = command.handler('fix queue user input', ctx)
+  await workerStarted
+
+  const image = { type: 'image', data: 'image-data', mimeType: 'image/png' }
+  const firstResult = await handlers.get('input')[0](
+    {
+      text: 'First queued request',
+      images: [image],
+      source: 'interactive',
+      streamingBehavior: 'steer'
+    },
+    ctx
+  )
+  const secondResult = await handlers.get('input')[0](
+    {
+      text: 'Second queued request',
+      source: 'interactive',
+      streamingBehavior: 'followUp'
+    },
+    ctx
+  )
+
+  assert.deepEqual(firstResult, { action: 'handled' })
+  assert.deepEqual(secondResult, { action: 'handled' })
+  assert.deepEqual(sentUserMessages, [])
+  assert.equal(leafId, 'worker-leaf')
+
+  for (const handler of handlers.get('agent_end') ?? []) {
+    await handler({
+      messages: [
+        { customType: PROMPT_MESSAGE_TYPE },
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'status: committed' }]
+        }
+      ]
+    })
+  }
+  await commandPromise
+
+  assert.equal(leafId, 'source-leaf')
+  assert.deepEqual(sentUserMessages, [
+    {
+      content: [{ type: 'text', text: 'First queued request' }, image],
+      options: undefined
+    }
+  ])
+  assert.ok(
+    notifications.some(({ message }) =>
+      message.includes('releasing 2 queued messages')
+    )
+  )
+
+  for (const handler of handlers.get('agent_start') ?? []) {
+    await handler({}, ctx)
+  }
+  assert.deepEqual(sentUserMessages, [
+    {
+      content: [{ type: 'text', text: 'First queued request' }, image],
+      options: undefined
+    },
+    {
+      content: 'Second queued request',
+      options: { deliverAs: 'followUp' }
+    }
+  ])
+})
