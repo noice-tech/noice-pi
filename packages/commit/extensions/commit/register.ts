@@ -1,6 +1,7 @@
 import type {
   ExtensionAPI,
-  ExtensionCommandContext
+  ExtensionCommandContext,
+  InputEvent
 } from '@earendil-works/pi-coding-agent'
 import { getMarkdownTheme } from '@earendil-works/pi-coding-agent'
 import { Container, Markdown, Spacer, Text } from '@earendil-works/pi-tui'
@@ -36,12 +37,19 @@ interface CommitResultDetails {
   status?: CommitDisplayStatus
 }
 
+interface QueuedUserMessage {
+  text: string
+  images: NonNullable<InputEvent['images']>
+}
+
 interface CommitRuntime {
   cachedConfig: ResolvedCommitConfig
   commitCommandPending: boolean
   commitWorkerRunning: boolean
   agentEndWaiter?: (messages: unknown[]) => void
   latestCommitWorkerMessages?: unknown[]
+  queuedUserMessages: QueuedUserMessage[]
+  queuedFollowUpUserMessages: QueuedUserMessage[]
 }
 
 const RUNTIME_REGISTRY_KEY = Symbol.for('pi-commit.runtime.v1')
@@ -65,9 +73,66 @@ export function registerCommit(pi: ExtensionAPI): void {
   const runtime: CommitRuntime = {
     cachedConfig: DEFAULT_COMMIT_CONFIG,
     commitCommandPending: false,
-    commitWorkerRunning: false
+    commitWorkerRunning: false,
+    queuedUserMessages: [],
+    queuedFollowUpUserMessages: []
   }
   registry.set(runtimeKey, runtime)
+
+  const sendQueuedUserMessage = (
+    message: QueuedUserMessage,
+    deliverAs?: 'steer' | 'followUp'
+  ) => {
+    const content =
+      message.images.length === 0
+        ? message.text
+        : [{ type: 'text' as const, text: message.text }, ...message.images]
+
+    if (deliverAs) {
+      pi.sendUserMessage(content, { deliverAs })
+    } else {
+      pi.sendUserMessage(content)
+    }
+  }
+
+  const releaseQueuedUserMessages = () => {
+    const [firstMessage, ...followUpMessages] =
+      runtime.queuedUserMessages.splice(0)
+    if (!firstMessage) return
+
+    runtime.queuedFollowUpUserMessages.push(...followUpMessages)
+    sendQueuedUserMessage(firstMessage)
+  }
+
+  pi.on('input', (event, ctx) => {
+    if (!runtime.commitWorkerRunning || event.source === 'extension') {
+      return { action: 'continue' }
+    }
+
+    runtime.queuedUserMessages.push({
+      text: event.text,
+      images: event.images ? [...event.images] : []
+    })
+    ctx.ui.notify(
+      `Message queued until the commit worker exits (${runtime.queuedUserMessages.length} pending)`,
+      'info'
+    )
+    return { action: 'handled' }
+  })
+
+  pi.on('agent_start', () => {
+    if (
+      runtime.commitWorkerRunning ||
+      runtime.queuedFollowUpUserMessages.length === 0
+    ) {
+      return
+    }
+
+    const followUpMessages = runtime.queuedFollowUpUserMessages.splice(0)
+    for (const message of followUpMessages) {
+      sendQueuedUserMessage(message, 'followUp')
+    }
+  })
 
   pi.on('agent_end', (event) => {
     if (runtime.commitWorkerRunning) {
@@ -369,6 +434,22 @@ export function registerCommit(pi: ExtensionAPI): void {
         ctx.ui.setWidget(COMMIT_WORKER_WIDGET_KEY, undefined)
         runtime.commitWorkerRunning = false
         runtime.latestCommitWorkerMessages = undefined
+
+        const returnedToSourceBranch =
+          Boolean(startLeafId) && ctx.sessionManager.getLeafId() === startLeafId
+        if (returnedToSourceBranch && runtime.queuedUserMessages.length > 0) {
+          const queuedMessageCount = runtime.queuedUserMessages.length
+          ctx.ui.notify(
+            `Commit worker exited; releasing ${queuedMessageCount} queued message${queuedMessageCount === 1 ? '' : 's'}`,
+            'info'
+          )
+          releaseQueuedUserMessages()
+        } else if (runtime.queuedUserMessages.length > 0) {
+          ctx.ui.notify(
+            `${runtime.queuedUserMessages.length} message${runtime.queuedUserMessages.length === 1 ? ' remains' : 's remain'} queued because the commit worker branch could not be exited`,
+            'warning'
+          )
+        }
       }
     }
   })
