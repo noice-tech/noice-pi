@@ -1,6 +1,6 @@
 {
   "name": "@noice-tech/pi-cutover",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Turn a Pi planning session into a clean implementation handoff with one command.",
   "type": "module",
   "license": "MIT",
