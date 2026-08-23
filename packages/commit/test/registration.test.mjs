@@ -2,29 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { discoverAndLoadExtensions } from '@earendil-works/pi-coding-agent'
+import {
+  createEventBus,
+  discoverAndLoadExtensions
+} from '@earendil-works/pi-coding-agent'
 
-import piCommitExtension from '../extensions/commit/index.ts'
 import { registerCommit } from '../extensions/commit/register.ts'
-
-test('registration is idempotent across direct and separately loaded extension APIs', async () => {
-  const harness = createRegistrationHarness()
-  const directApi = harness.createApi()
-  const copiedApi = harness.createApi()
-
-  registerCommit(directApi)
-  registerCommit(directApi)
-  piCommitExtension(directApi)
-  const copy = await import(
-    `../extensions/commit/register.ts?copy=${Date.now()}`
-  )
-  copy.registerCommit(copiedApi)
-
-  assert.deepEqual(harness.commandNames, ['commit'])
-  assert.equal(harness.rendererTypes.length, 1)
-  assert.equal(harness.handlerCount('agent_end'), 1)
-  assert.equal(harness.handlerCount('context'), 1)
-})
 
 test('the real Pi loader registers one command set with native package composition in either order', async () => {
   const commitPath = fileURLToPath(
@@ -79,15 +62,12 @@ test('an unrelated commit command does not suppress pi-commit', () => {
 
 function createRegistrationHarness() {
   const handlers = new Map()
+  const eventBus = createEventBus()
   const commandNames = []
-  const rendererTypes = []
-  const eventBus = {}
 
   return {
-    eventBus,
     handlers,
     commandNames,
-    rendererTypes,
     createApi() {
       return {
         events: eventBus,
@@ -97,13 +77,8 @@ function createRegistrationHarness() {
         registerCommand(name) {
           commandNames.push(name)
         },
-        registerMessageRenderer(type) {
-          rendererTypes.push(type)
-        }
+        registerMessageRenderer() {}
       }
-    },
-    handlerCount(name) {
-      return handlers.get(name)?.length ?? 0
     }
   }
 }

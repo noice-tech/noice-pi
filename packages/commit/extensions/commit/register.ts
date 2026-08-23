@@ -53,6 +53,7 @@ interface CommitRuntime {
 }
 
 const RUNTIME_REGISTRY_KEY = Symbol.for('pi-commit.runtime.v1')
+const RUNTIME_KEY_EVENT = 'pi-commit:runtime-key:v1'
 type RuntimeRegistry = WeakMap<object, CommitRuntime>
 
 function getRuntimeRegistry(): RuntimeRegistry {
@@ -62,12 +63,28 @@ function getRuntimeRegistry(): RuntimeRegistry {
   return (globals[RUNTIME_REGISTRY_KEY] ??= new WeakMap())
 }
 
+function getRuntimeKey(pi: ExtensionAPI) {
+  if (!pi.events) return { key: pi as object }
+
+  // Pi 0.84 gives each extension its own API wrapper over one shared event bus.
+  // Exchange a stable key on that bus so direct and bundled copies still dedupe.
+  const probe: { key?: object } = {}
+  pi.events.emit(RUNTIME_KEY_EVENT, probe)
+  if (probe.key) return { key: probe.key }
+
+  const key = {}
+  const release = pi.events.on(RUNTIME_KEY_EVENT, (data) => {
+    if (data && typeof data === 'object') {
+      const runtimeProbe = data as { key?: object }
+      runtimeProbe.key ??= key
+    }
+  })
+  return { key, release }
+}
+
 export function registerCommit(pi: ExtensionAPI): void {
   const registry = getRuntimeRegistry()
-  // Pi creates a distinct ExtensionAPI wrapper for each extension, but every
-  // wrapper in one runtime shares the event bus. Keying by that bus deduplicates
-  // direct and bundled copies while preserving independent Pi runtimes.
-  const runtimeKey = pi.events ?? pi
+  const { key: runtimeKey, release: releaseRuntimeKey } = getRuntimeKey(pi)
   if (registry.has(runtimeKey)) return
 
   const runtime: CommitRuntime = {
@@ -88,11 +105,7 @@ export function registerCommit(pi: ExtensionAPI): void {
         ? message.text
         : [{ type: 'text' as const, text: message.text }, ...message.images]
 
-    if (deliverAs) {
-      pi.sendUserMessage(content, { deliverAs })
-    } else {
-      pi.sendUserMessage(content)
-    }
+    pi.sendUserMessage(content, { deliverAs, expandPromptTemplates: true })
   }
 
   const releaseQueuedUserMessages = () => {
@@ -168,6 +181,7 @@ export function registerCommit(pi: ExtensionAPI): void {
   })
 
   pi.on('session_shutdown', () => {
+    releaseRuntimeKey?.()
     if (registry.get(runtimeKey) === runtime) registry.delete(runtimeKey)
   })
 
