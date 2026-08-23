@@ -1,6 +1,6 @@
 # @noice-tech/pi-lazy-ladder
 
-Opt-in Pi prompt templates for coding tasks that benefit from a deliberately minimal, senior-engineer approach.
+Solve coding tasks with the least code and complexity needed.
 
 ## The seven-step ladder
 

@@ -1,13 +1,14 @@
 {
   "name": "@noice-tech/pi-lazy-ladder",
   "version": "2.0.1",
-  "description": "Apply opt-in minimal-solution guidance to individual Pi requests.",
+  "description": "Opt-in Pi prompts for solving coding tasks with the least code and complexity needed.",
   "type": "module",
   "license": "MIT",
   "keywords": [
     "pi-package",
     "pi",
     "lazy-ladder",
+    "ponytail",
     "yagni",
     "minimalism",
     "coding-agent"
