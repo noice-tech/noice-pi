@@ -170,7 +170,7 @@ test('/commit selects immediately, then waits for the active turn', async () => 
 test('/commit queues user input until it returns to the source branch', async () => {
   const handlers = new Map()
   const notifications = []
-  const sentUserMessages = []
+  const releasedUserMessages = []
   let command
   let leafId = 'source-leaf'
   let workerStartedResolve
@@ -192,8 +192,8 @@ test('/commit queues user input until it returns to the source branch', async ()
         workerStartedResolve()
       }
     },
-    sendUserMessage(content, options) {
-      sentUserMessages.push({ content, options })
+    sendUserMessage(content) {
+      releasedUserMessages.push(content)
     }
   }
 
@@ -252,7 +252,7 @@ test('/commit queues user input until it returns to the source branch', async ()
 
   assert.deepEqual(firstResult, { action: 'handled' })
   assert.deepEqual(secondResult, { action: 'handled' })
-  assert.deepEqual(sentUserMessages, [])
+  assert.deepEqual(releasedUserMessages, [])
   assert.equal(leafId, 'worker-leaf')
 
   for (const handler of handlers.get('agent_end') ?? []) {
@@ -269,11 +269,8 @@ test('/commit queues user input until it returns to the source branch', async ()
   await commandPromise
 
   assert.equal(leafId, 'source-leaf')
-  assert.deepEqual(sentUserMessages, [
-    {
-      content: [{ type: 'text', text: 'First queued request' }, image],
-      options: undefined
-    }
+  assert.deepEqual(releasedUserMessages, [
+    [{ type: 'text', text: 'First queued request' }, image]
   ])
   assert.ok(
     notifications.some(({ message }) =>
@@ -284,14 +281,8 @@ test('/commit queues user input until it returns to the source branch', async ()
   for (const handler of handlers.get('agent_start') ?? []) {
     await handler({}, ctx)
   }
-  assert.deepEqual(sentUserMessages, [
-    {
-      content: [{ type: 'text', text: 'First queued request' }, image],
-      options: undefined
-    },
-    {
-      content: 'Second queued request',
-      options: { deliverAs: 'followUp' }
-    }
+  assert.deepEqual(releasedUserMessages, [
+    [{ type: 'text', text: 'First queued request' }, image],
+    'Second queued request'
   ])
 })
