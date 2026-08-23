@@ -72,6 +72,8 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  packages/lazy-ladder: {}
+
   packages/terminal-bell:
     devDependencies:
       '@earendil-works/pi-coding-agent':

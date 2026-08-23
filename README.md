@@ -10,6 +10,7 @@ MIT-licensed workflow packages for the [Pi coding agent](https://github.com/eare
 | [`@noice-tech/pi-changelog`](packages/changelog)         | Preview unreleased changes and write privacy-safe release notes.           |
 | [`@noice-tech/pi-cutover`](packages/cutover)             | Turn a Pi planning session into a clean implementation handoff.            |
 | [`@noice-tech/pi-github-issues`](packages/github-issues) | Pick a GitHub issue and start a focused Pi planning session.               |
+| [`@noice-tech/pi-lazy-ladder`](packages/lazy-ladder)     | Solve coding tasks with the least code and complexity needed.              |
 | [`@noice-tech/pi-terminal-bell`](packages/terminal-bell) | Ring your terminal when Pi finishes a long run.                            |
 | [`@noice-tech/pi-work-context`](packages/work-context)   | Show session, Git, pull request, and CI context in every Pi terminal.      |
 
@@ -20,6 +21,7 @@ pi install -l npm:@noice-tech/pi-commit
 pi install -l npm:@noice-tech/pi-changelog
 pi install -l npm:@noice-tech/pi-cutover
 pi install -l npm:@noice-tech/pi-github-issues
+pi install -l npm:@noice-tech/pi-lazy-ladder
 pi install -l npm:@noice-tech/pi-terminal-bell
 pi install -l npm:@noice-tech/pi-work-context
 ```

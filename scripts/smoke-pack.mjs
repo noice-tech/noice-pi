@@ -100,6 +100,22 @@ const packageSpecifications = {
     exactArchive: true,
     dogfoodLocally: true
   },
+  '@noice-tech/pi-lazy-ladder': {
+    required: [
+      'package/package.json',
+      'package/README.md',
+      'package/LICENSE',
+      'package/prompts/lazyladder-repo-audit.md',
+      'package/prompts/lazyladder-review.md',
+      'package/prompts/lazyladder-ultra.md',
+      'package/prompts/lazyladder.md'
+    ],
+    piResources: {
+      prompts: ['./prompts/*.md']
+    },
+    exactArchive: true,
+    dogfoodLocally: true
+  },
   '@noice-tech/pi-terminal-bell': {
     required: [
       'package/package.json',
