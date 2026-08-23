@@ -1,0 +1,43 @@
+{
+  "name": "@noice-tech/pi-lazy-ladder",
+  "version": "2.0.1",
+  "description": "Apply opt-in minimal-solution guidance to individual Pi requests.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "lazy-ladder",
+    "yagni",
+    "minimalism",
+    "coding-agent"
+  ],
+  "files": [
+    "prompts/*.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noice-tech/noice-pi.git",
+    "directory": "packages/lazy-ladder"
+  },
+  "homepage": "https://github.com/noice-tech/noice-pi/tree/main/packages/lazy-ladder#readme",
+  "bugs": {
+    "url": "https://github.com/noice-tech/noice-pi/issues"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "node ../../scripts/smoke-pack.mjs @noice-tech/pi-lazy-ladder packages/lazy-ladder"
+  },
+  "pi": {
+    "prompts": [
+      "./prompts/*.md"
+    ]
+  }
+}

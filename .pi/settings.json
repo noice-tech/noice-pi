@@ -4,6 +4,7 @@
     "../packages/changelog",
     "../packages/cutover",
     "../packages/github-issues",
+    "../packages/lazy-ladder",
     "../packages/terminal-bell",
     "../packages/work-context"
   ]
