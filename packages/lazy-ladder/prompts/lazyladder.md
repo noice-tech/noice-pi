@@ -29,8 +29,10 @@ handling, security, accessibility basics, hardware calibration, and anything
 the user explicitly requires. Non-trivial logic needs one small runnable check;
 trivial one-liners do not need a test framework.
 
-Deliver code first, then at most three short lines saying what was skipped and
-when to add it. Give a full explanation if the user explicitly asks for one.
+Follow the requested action. For review, audit, or report-only tasks, report
+findings without editing. Otherwise, deliver code first, then at most three short
+lines saying what was skipped and when to add it. Give a full explanation if the
+user explicitly asks for one.
 
 ## Task
 
