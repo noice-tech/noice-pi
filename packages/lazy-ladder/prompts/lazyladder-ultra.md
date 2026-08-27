@@ -14,7 +14,8 @@ justify the larger version; do not stall.
 
 Never simplify away validation at trust boundaries, data-loss handling,
 security, accessibility basics, hardware calibration, or an explicit user
-requirement. This applies only to this task; do not persist a mode.
+requirement. For review, audit, or report-only tasks, report findings without
+editing. This applies only to this task; do not persist a mode.
 
 ## Task
 

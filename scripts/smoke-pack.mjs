@@ -105,8 +105,6 @@ const packageSpecifications = {
       'package/package.json',
       'package/README.md',
       'package/LICENSE',
-      'package/prompts/lazyladder-repo-audit.md',
-      'package/prompts/lazyladder-review.md',
       'package/prompts/lazyladder-ultra.md',
       'package/prompts/lazyladder.md'
     ],

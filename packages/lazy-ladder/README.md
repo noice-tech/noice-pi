@@ -25,9 +25,14 @@ Lazy Ladder is a prompt-only package. It registers Markdown prompt templates, no
 - **Full** applies every rung and stops at the simplest solution that meets the actual need.
 - **Ultra** first challenges whether the work is needed and prefers deletion before addition.
 
-## Review or repository audit
+## Review or audit
 
-`/lazyladder-review` is a read-only review of over-engineering in the current diff or a supplied scope. `/lazyladder-repo-audit` is a read-only scan of the entire repository. Neither command applies fixes.
+Reviews and audits are tasks, not separate commands:
+
+```text
+/lazyladder Review the current changes for over-engineering. Report only; do not edit.
+/lazyladder-ultra Audit the whole repository. Report only and rank the biggest deletions first.
+```
 
 ## Install
 
@@ -37,12 +42,10 @@ pi install -l npm:@noice-tech/pi-lazy-ladder
 
 ## Commands
 
-| Command                      | What it does                                                                     |
-| ---------------------------- | -------------------------------------------------------------------------------- |
-| `/lazyladder <task>`         | Applies the complete minimal-solution ladder.                                    |
-| `/lazyladder-ultra <task>`   | Challenges the requirement and prefers deletion before addition.                 |
-| `/lazyladder-review [scope]` | Reviews the current diff or supplied scope for over-engineering without editing. |
-| `/lazyladder-repo-audit`     | Audits the whole repository for over-engineering without editing.                |
+| Command                    | What it does                                                     |
+| -------------------------- | ---------------------------------------------------------------- |
+| `/lazyladder <task>`       | Applies the complete minimal-solution ladder.                    |
+| `/lazyladder-ultra <task>` | Challenges the requirement and prefers deletion before addition. |
 
 ## Lazy Ladder and Ponytail
 
