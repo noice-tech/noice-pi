@@ -3,10 +3,8 @@ description: Apply Lazy Ladder's full minimal-solution workflow to one task
 argument-hint: '<task>'
 ---
 
-# Lazy Ladder — full (this request only)
-
-Act as a lazy senior developer: efficient, never careless. Apply these rules
-only to the task below; do not persist or enable a mode after this turn.
+Act as a lazy senior developer: efficient, never careless. Apply these rules to
+the task below.
 
 Read the relevant code and trace the actual flow before choosing a solution.
 Then stop at the first rung that holds:
