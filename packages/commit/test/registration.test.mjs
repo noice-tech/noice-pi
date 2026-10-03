@@ -1,84 +1,95 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-
+import test from 'node:test'
 import {
-  createEventBus,
-  discoverAndLoadExtensions
+  DefaultResourceLoader,
+  SettingsManager
 } from '@earendil-works/pi-coding-agent'
+import {
+  registerCommit,
+  COMMIT_AUTHORIZATION_POLICY
+} from '../extensions/commit/register.ts'
+import { createHarness } from './harness.mjs'
 
-import { registerCommit } from '../extensions/commit/register.ts'
-
-test('the real Pi loader registers one command set with native package composition in either order', async () => {
-  const commitPath = fileURLToPath(
-    new URL('../extensions/commit/index.ts', import.meta.url)
+test('commit and changelog packages discover one commit template in either order', async () => {
+  const commitPath = fileURLToPath(new URL('..', import.meta.url))
+  const changelogPath = fileURLToPath(
+    new URL('../../changelog', import.meta.url)
   )
-  const composedCommitPath = fileURLToPath(
-    new URL(
-      '../../changelog/node_modules/@noice-tech/pi-commit/extensions/commit/index.ts',
-      import.meta.url
-    )
-  )
-
-  for (const paths of [
-    [commitPath, composedCommitPath],
-    [composedCommitPath, commitPath]
+  for (const packages of [
+    [commitPath, changelogPath],
+    [changelogPath, commitPath]
   ]) {
-    const loaded = await discoverAndLoadExtensions(paths, process.cwd())
-    assert.deepEqual(loaded.errors, [])
-    assert.deepEqual(
-      loaded.extensions.flatMap((extension) => [...extension.commands.keys()]),
-      ['commit']
+    const h = await createHarness()
+    const loader = new DefaultResourceLoader({
+      cwd: h.ctx.cwd,
+      agentDir: join(h.ctx.cwd, 'agent'),
+      settingsManager: SettingsManager.inMemory({ packages }),
+      noThemes: true,
+      noSkills: true,
+      noContextFiles: true
+    })
+    await loader.reload()
+    assert.equal(
+      loader.getPrompts().prompts.filter(({ name }) => name === 'commit')
+        .length,
+      1
+    )
+    assert.deepEqual(loader.getExtensions().errors, [])
+    assert.ok(
+      loader
+        .getExtensions()
+        .extensions.every((extension) => !extension.commands.has('commit'))
     )
   }
 })
 
-test('shutdown clears ownership so a fresh extension runtime can register', () => {
-  const harness = createRegistrationHarness()
-  const firstApi = harness.createApi()
-  registerCommit(firstApi)
-
-  for (const handler of harness.handlers.get('session_shutdown') ?? []) {
-    handler({ reason: 'reload' }, {})
-  }
-
-  registerCommit(harness.createApi())
-  assert.deepEqual(harness.commandNames, ['commit', 'commit'])
-})
-
-test('an unrelated commit command does not suppress pi-commit', () => {
-  const harness = createRegistrationHarness()
-  const competitorApi = harness.createApi()
-  const commitApi = harness.createApi()
-  competitorApi.registerCommand('commit', { description: 'competitor' })
-
-  registerCommit(commitApi)
-
-  assert.equal(
-    harness.commandNames.filter((name) => name === 'commit').length,
-    2
-  )
-})
-
-function createRegistrationHarness() {
-  const handlers = new Map()
-  const eventBus = createEventBus()
-  const commandNames = []
-
-  return {
-    handlers,
-    commandNames,
-    createApi() {
-      return {
-        events: eventBus,
-        on(name, handler) {
-          handlers.set(name, [...(handlers.get(name) ?? []), handler])
-        },
-        registerCommand(name) {
-          commandNames.push(name)
-        },
-        registerMessageRenderer() {}
-      }
+test('adapter enables Codemode, supplies validated configuration, and clears invocation state', async () => {
+  const config = {
+    pullRequest: 'never',
+    format: {
+      changeTypes: [
+        { name: 'docs', description: 'Documentation', public: true }
+      ],
+      instructions: 'Use type(scope): description.'
     }
   }
-}
+  const h = await createHarness({ config, active: ['bash', 'read'] })
+  registerCommit(h.pi)
+  await h.dispatch('session_start')
+  assert.deepEqual(h.toolChanges, [['bash', 'read', 'codemode']])
+  assert.deepEqual(
+    await h.dispatch('input', { text: '/commit --pr docs document workflow' }),
+    { action: 'continue' }
+  )
+  const event = await h.prepare('--pr docs document workflow')
+  const section = event.systemPromptOptions.sections.commit_request
+  assert.deepEqual(JSON.parse(section.split('\n')[1]), {
+    mode: 'normal',
+    changeType: 'docs',
+    context: 'document workflow',
+    pullRequest: 'auto',
+    flag: '--pr'
+  })
+  assert.ok(section.includes(config.format.instructions))
+  assert.deepEqual(event.systemPromptOptions.promptGuidelines, [
+    COMMIT_AUTHORIZATION_POLICY
+  ])
+
+  const inferred = await h.prepare('describe the change')
+  assert.equal(
+    JSON.parse(
+      inferred.systemPromptOptions.sections.commit_request.split('\n')[1]
+    ).changeType,
+    'auto'
+  )
+  await h.dispatch('before_agent_start', {
+    prompt: 'continue coding',
+    systemPromptOptions: inferred.systemPromptOptions
+  })
+  assert.equal(inferred.systemPromptOptions.sections.commit_request, undefined)
+  assert.deepEqual(inferred.systemPromptOptions.promptGuidelines, [
+    COMMIT_AUTHORIZATION_POLICY
+  ])
+})

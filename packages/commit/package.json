@@ -17,6 +17,7 @@
   "files": [
     "extensions/**/*.ts",
     "extensions/**/*.md",
+    "prompts/**/*.md",
     "README.md",
     "LICENSE"
   ],
@@ -43,19 +44,19 @@
     "test": "node --test test/*.test.mjs && node ../../scripts/smoke-pack.mjs @noice-tech/pi-commit packages/commit"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
+    "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.84.2",
-    "@earendil-works/pi-coding-agent": "0.84.2",
-    "@earendil-works/pi-tui": "0.84.2",
+    "@earendil-works/pi-coding-agent": "1.0.0",
     "@types/node": "22.20.1",
     "typescript": "6.0.3"
   },
   "pi": {
     "extensions": [
       "./extensions/commit/index.ts"
+    ],
+    "prompts": [
+      "./prompts/commit.md"
     ]
   }
 }

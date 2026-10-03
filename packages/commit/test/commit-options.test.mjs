@@ -1,17 +1,7 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import test from 'node:test'
+import { parseCommitArguments } from '../extensions/commit/command.ts'
 
-import {
-  getCommitArgumentCompletions,
-  parseCommitArguments,
-  renderCustomFormatPolicy
-} from '../extensions/commit/command.ts'
-import piCommitExtension from '../extensions/commit/index.ts'
-
-const PROMPT_MESSAGE_TYPE = 'noice-changelog-commit-worker-prompt'
 const defaultConfig = { pullRequest: 'auto', format: 'opinionated' }
 const customConfig = {
   pullRequest: 'never',
@@ -24,186 +14,40 @@ const customConfig = {
   }
 }
 
-test('commit options resolve PR overrides and reject invalid stacked combinations', () => {
-  assert.equal(
-    parseCommitArguments('--no-pr fix do work', defaultConfig).pullRequest,
-    'never'
-  )
-  assert.equal(
-    parseCommitArguments('--pr docs do work', customConfig).pullRequest,
-    'auto'
-  )
-  assert.throws(
-    () => parseCommitArguments('--pr --no-pr fix work', defaultConfig),
-    /only one/
-  )
-  assert.throws(
-    () => parseCommitArguments('--wat fix work', defaultConfig),
-    /Unknown \/commit option/
-  )
-  assert.throws(
-    () => parseCommitArguments('stacked chore work', customConfig),
-    /Stacked commits require a pull request/
-  )
-  assert.equal(
-    parseCommitArguments('stacked --pr chore work', customConfig).pullRequest,
-    'auto'
-  )
-})
-
-test('completions use configured types and never suggest no-PR for stacked mode', () => {
+test('parser resolves types, descriptions, modes, and PR overrides', () => {
+  assert.deepEqual(parseCommitArguments('--no-pr fix do work', defaultConfig), {
+    mode: 'normal',
+    changeType: 'fix',
+    context: 'do work',
+    pullRequest: 'never',
+    flag: '--no-pr'
+  })
   assert.deepEqual(
-    getCommitArgumentCompletions('--no-pr do', customConfig).map(
-      ({ value }) => value
-    ),
-    ['--no-pr docs ']
-  )
-  assert.deepEqual(
-    getCommitArgumentCompletions('stacked --pr ch', customConfig).map(
-      ({ value }) => value
-    ),
-    ['stacked --pr chore ']
-  )
-  assert.ok(
-    getCommitArgumentCompletions('--no-pr ', customConfig).every(
-      ({ value }) => !value.includes('--pr') && !value.includes('--no-pr', 1)
-    )
-  )
-  const stacked = getCommitArgumentCompletions('stacked ', customConfig)
-  assert.ok(stacked.some(({ value }) => value === 'stacked --pr '))
-  assert.ok(stacked.every(({ value }) => !value.includes('--no-pr')))
-})
-
-test('custom policy delimits instructions and public summary treatment', () => {
-  const policy = renderCustomFormatPolicy(customConfig, 'chore')
-  assert.match(policy, /cannot override the operational workflow/i)
-  assert.match(policy, /`docs`.*standalone user-facing sentence/i)
-  assert.match(policy, /`chore`.*exactly `None\.`/i)
-  assert.match(policy, /Use type\(scope\): description\./)
-})
-
-test('/commit --no-pr injects the isolated route and strips flags from context', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'pi-commit-options-'))
-  await mkdir(join(root, '.pi'), { recursive: true })
-  await writeFile(
-    join(root, '.pi', 'pi-commit.json'),
-    JSON.stringify(customConfig)
-  )
-  const harness = createHarness(root)
-
-  await harness.commands
-    .get('commit')
-    .handler('--no-pr chore refresh fixtures', harness.ctx)
-
-  const prompt = harness.sent.find(
-    ({ message }) => message.customType === PROMPT_MESSAGE_TYPE
-  )
-  assert.ok(prompt)
-  assert.match(
-    prompt.message.content,
-    /Selected pull request behavior:\s*never/
-  )
-  assert.match(prompt.message.content, /Selected change type:\s*chore/)
-  assert.match(
-    prompt.message.content,
-    /What was done, in the user's words:\s*refresh fixtures/
-  )
-  assert.doesNotMatch(
-    prompt.message.content.match(
-      /What was done, in the user's words:\s*([^\n]+)/
-    )[1],
-    /--no-pr/
-  )
-  assert.match(prompt.message.content, /Do not invoke `gh` for any reason/i)
-  assert.match(prompt.message.content, /report `pr: none`/i)
-  assert.match(prompt.message.content, /Use type\(scope\): description\./)
-  assert.match(
-    prompt.message.content,
-    /requires Public summary to be exactly `None\.`/
-  )
-})
-
-test('invalid configuration fails before a worker starts', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'pi-commit-invalid-'))
-  await mkdir(join(root, '.pi'), { recursive: true })
-  await writeFile(join(root, '.pi', 'pi-commit.json'), '{')
-  const harness = createHarness(root)
-
-  await harness.commands.get('commit').handler('fix work', harness.ctx)
-
-  assert.equal(
-    harness.sent.some(
-      ({ message }) => message.customType === PROMPT_MESSAGE_TYPE
-    ),
-    false
-  )
-  assert.ok(
-    harness.notifications.some(
-      ({ message, type }) =>
-        type === 'error' && message.includes('Invalid JSON')
-    )
-  )
-})
-
-function createHarness(cwd) {
-  const handlers = new Map()
-  const commands = new Map()
-  const sent = []
-  const notifications = []
-
-  const pi = {
-    on(name, handler) {
-      handlers.set(name, [...(handlers.get(name) ?? []), handler])
-    },
-    registerCommand(name, command) {
-      commands.set(name, command)
-    },
-    registerMessageRenderer() {},
-    sendMessage(message, options) {
-      sent.push({ message, options })
-      if (message.customType !== PROMPT_MESSAGE_TYPE) return
-      for (const handler of handlers.get('agent_end') ?? []) {
-        handler({
-          messages: [
-            { role: 'custom', ...message },
-            {
-              role: 'assistant',
-              content: [{ type: 'text', text: 'status: committed' }]
-            }
-          ]
-        })
-      }
+    parseCommitArguments('stacked --pr docs document work', customConfig),
+    {
+      mode: 'stacked',
+      changeType: 'docs',
+      context: 'document work',
+      pullRequest: 'auto',
+      flag: '--pr'
     }
-  }
+  )
+  const inferred = parseCommitArguments('describe the change', customConfig)
+  assert.equal(inferred.changeType, undefined)
+  assert.equal(inferred.context, 'describe the change')
+  assert.equal(inferred.pullRequest, 'never')
+})
 
-  const ctx = {
-    cwd,
-    mode: 'json',
-    isProjectTrusted() {
-      return true
-    },
-    isIdle() {
-      return true
-    },
-    waitForIdle() {
-      return Promise.resolve()
-    },
-    sessionManager: {
-      getLeafId() {
-        return 'leaf'
-      }
-    },
-    async navigateTree() {
-      return { cancelled: false }
-    },
-    ui: {
-      notify(message, type) {
-        notifications.push({ message, type })
-      },
-      setWidget() {}
-    }
+test('parser rejects unknown, conflicting, duplicate, and incompatible flags', () => {
+  for (const args of [
+    '--pr --no-pr fix work',
+    '--pr --pr fix work',
+    '--wat fix work'
+  ]) {
+    assert.throws(() => parseCommitArguments(args, defaultConfig))
   }
-
-  piCommitExtension(pi)
-  return { commands, ctx, notifications, sent, handlers, pi }
-}
+  assert.throws(() => parseCommitArguments('stacked chore work', customConfig))
+  assert.throws(() =>
+    parseCommitArguments('stacked --no-pr fix work', defaultConfig)
+  )
+})
