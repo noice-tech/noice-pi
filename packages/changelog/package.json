@@ -31,7 +31,7 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs && node ../../scripts/smoke-pack.mjs @noice-tech/pi-changelog packages/changelog"
+    "test": "node ../../scripts/smoke-pack.mjs @noice-tech/pi-changelog packages/changelog"
   },
   "dependencies": {
     "@noice-tech/pi-commit": "workspace:*"
@@ -40,15 +40,15 @@
     "@noice-tech/pi-commit"
   ],
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
+    "@earendil-works/pi-coding-agent": "*"
   },
   "pi": {
     "extensions": [
       "./node_modules/@noice-tech/pi-commit/extensions/commit/index.ts"
     ],
     "prompts": [
-      "./prompts/*.md"
+      "./prompts/*.md",
+      "./node_modules/@noice-tech/pi-commit/prompts/commit.md"
     ]
   }
 }

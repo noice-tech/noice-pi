@@ -44,14 +44,21 @@ const packageSpecifications = {
       'package/node_modules/@noice-tech/pi-commit/extensions/commit/index.ts',
       'package/node_modules/@noice-tech/pi-commit/extensions/commit/opinionated-format.md',
       'package/node_modules/@noice-tech/pi-commit/extensions/commit/register.ts',
-      'package/node_modules/@noice-tech/pi-commit/extensions/commit/worker-prompt.md'
+      'package/node_modules/@noice-tech/pi-commit/extensions/commit/workflows/normal.md',
+      'package/node_modules/@noice-tech/pi-commit/extensions/commit/workflows/no-pr.md',
+      'package/node_modules/@noice-tech/pi-commit/extensions/commit/workflows/pull-request.md',
+      'package/node_modules/@noice-tech/pi-commit/extensions/commit/workflows/stacked.md',
+      'package/node_modules/@noice-tech/pi-commit/prompts/commit.md'
     ],
     allowedForbiddenPrefixes: ['package/node_modules/@noice-tech/pi-commit/'],
     piResources: {
       extensions: [
         './node_modules/@noice-tech/pi-commit/extensions/commit/index.ts'
       ],
-      prompts: ['./prompts/*.md']
+      prompts: [
+        './prompts/*.md',
+        './node_modules/@noice-tech/pi-commit/prompts/commit.md'
+      ]
     },
     exactArchive: true,
     dogfoodLocally: true
@@ -66,10 +73,15 @@ const packageSpecifications = {
       'package/extensions/commit/index.ts',
       'package/extensions/commit/opinionated-format.md',
       'package/extensions/commit/register.ts',
-      'package/extensions/commit/worker-prompt.md'
+      'package/extensions/commit/workflows/normal.md',
+      'package/extensions/commit/workflows/no-pr.md',
+      'package/extensions/commit/workflows/pull-request.md',
+      'package/extensions/commit/workflows/stacked.md',
+      'package/prompts/commit.md'
     ],
     piResources: {
-      extensions: ['./extensions/commit/index.ts']
+      extensions: ['./extensions/commit/index.ts'],
+      prompts: ['./prompts/commit.md']
     },
     exactArchive: true,
     dogfoodLocally: true

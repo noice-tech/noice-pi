@@ -1,694 +1,119 @@
 import type {
   ExtensionAPI,
-  ExtensionCommandContext,
-  InputEvent
+  ExtensionContext
 } from '@earendil-works/pi-coding-agent'
-import { getMarkdownTheme } from '@earendil-works/pi-coding-agent'
-import { Container, Markdown, Spacer, Text } from '@earendil-works/pi-tui'
 import { readFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import {
-  changeTypeOptions,
-  getCommitArgumentCompletions,
-  parseCommitArguments,
-  renderCustomFormatPolicy,
-  type ChangeType,
-  type CommitMode,
-  type ResolvedCommitArguments
-} from './command.ts'
-import {
-  DEFAULT_COMMIT_CONFIG,
-  loadCommitConfig,
-  type ResolvedCommitConfig
-} from './config.ts'
+import { parseCommitArguments, renderCustomFormatPolicy } from './command.ts'
+import { loadCommitConfig } from './config.ts'
 
-const MESSAGE_TYPE = 'noice-changelog-commit-result'
-const PROMPT_MESSAGE_TYPE = 'noice-changelog-commit-worker-prompt'
-const COMMIT_WORKER_WIDGET_KEY = 'noice-changelog-commit-worker'
+export const COMMIT_AUTHORIZATION_POLICY =
+  'Commit, push, and create or update pull requests only when explicitly authorized by the user. ' +
+  '/commit authorizes its requested workflow for that invocation only. ' +
+  'After reporting success, failure, or cancellation, authorization ends: return to ordinary coding ' +
+  'and do not commit, push, or change PR metadata again without fresh explicit user authorization. ' +
+  'A previous commit result is useful repository state, not ongoing authorization.'
 
-type CommitDisplayStatus = 'ok' | 'cancelled' | 'failed'
+const ARGUMENTS_PREFIX =
+  '# Explicit /commit invocation\n\nInvocation arguments:\n'
+const ARGUMENTS_END = '\n\n## Request\n'
 
-interface CommitResultDetails {
-  changeType?: ChangeType
-  mode?: CommitMode
-  userContext?: string
-  workerLeafId?: string | null
-  status?: CommitDisplayStatus
-}
-
-interface QueuedUserMessage {
-  text: string
-  images: NonNullable<InputEvent['images']>
-}
-
-interface CommitRuntime {
-  cachedConfig: ResolvedCommitConfig
-  commitCommandPending: boolean
-  commitWorkerRunning: boolean
-  agentEndWaiter?: (messages: unknown[]) => void
-  latestCommitWorkerMessages?: unknown[]
-  queuedUserMessages: QueuedUserMessage[]
-  queuedFollowUpUserMessages: QueuedUserMessage[]
-}
-
-const RUNTIME_REGISTRY_KEY = Symbol.for('pi-commit.runtime.v1')
-const RUNTIME_KEY_EVENT = 'pi-commit:runtime-key:v1'
-type RuntimeRegistry = WeakMap<object, CommitRuntime>
-
-function getRuntimeRegistry(): RuntimeRegistry {
-  const globals = globalThis as typeof globalThis & {
-    [RUNTIME_REGISTRY_KEY]?: RuntimeRegistry
-  }
-  return (globals[RUNTIME_REGISTRY_KEY] ??= new WeakMap())
-}
-
-function getRuntimeKey(pi: ExtensionAPI) {
-  if (!pi.events) return { key: pi as object }
-
-  // Pi 0.84 gives each extension its own API wrapper over one shared event bus.
-  // Exchange a stable key on that bus so direct and bundled copies still dedupe.
-  const probe: { key?: object } = {}
-  pi.events.emit(RUNTIME_KEY_EVENT, probe)
-  if (probe.key) return { key: probe.key }
-
-  const key = {}
-  const release = pi.events.on(RUNTIME_KEY_EVENT, (data) => {
-    if (data && typeof data === 'object') {
-      const runtimeProbe = data as { key?: object }
-      runtimeProbe.key ??= key
-    }
-  })
-  return { key, release }
-}
-
+/** Configure the prompt template; no command, worker, or conversation filtering. */
 export function registerCommit(pi: ExtensionAPI): void {
-  const registry = getRuntimeRegistry()
-  const { key: runtimeKey, release: releaseRuntimeKey } = getRuntimeKey(pi)
-  if (registry.has(runtimeKey)) return
-
-  const runtime: CommitRuntime = {
-    cachedConfig: DEFAULT_COMMIT_CONFIG,
-    commitCommandPending: false,
-    commitWorkerRunning: false,
-    queuedUserMessages: [],
-    queuedFollowUpUserMessages: []
-  }
-  registry.set(runtimeKey, runtime)
-
-  const sendQueuedUserMessage = (
-    message: QueuedUserMessage,
-    deliverAs?: 'steer' | 'followUp'
-  ) => {
-    const content =
-      message.images.length === 0
-        ? message.text
-        : [{ type: 'text' as const, text: message.text }, ...message.images]
-
-    pi.sendUserMessage(content, { deliverAs, expandPromptTemplates: true })
-  }
-
-  const releaseQueuedUserMessages = () => {
-    const [firstMessage, ...followUpMessages] =
-      runtime.queuedUserMessages.splice(0)
-    if (!firstMessage) return
-
-    runtime.queuedFollowUpUserMessages.push(...followUpMessages)
-    sendQueuedUserMessage(firstMessage)
-  }
-
-  pi.on('input', (event, ctx) => {
-    if (!runtime.commitWorkerRunning || event.source === 'extension') {
-      return { action: 'continue' }
-    }
-
-    runtime.queuedUserMessages.push({
-      text: event.text,
-      images: event.images ? [...event.images] : []
-    })
-    ctx.ui.notify(
-      `Message queued until the commit worker exits (${runtime.queuedUserMessages.length} pending)`,
-      'info'
-    )
-    return { action: 'handled' }
-  })
-
-  pi.on('agent_start', () => {
+  const enableCodemode = () => {
+    const active = pi.getActiveTools()
     if (
-      runtime.commitWorkerRunning ||
-      runtime.queuedFollowUpUserMessages.length === 0
+      !active.includes('codemode') &&
+      pi.getAllTools().some((tool) => tool.name === 'codemode')
     ) {
-      return
+      pi.setActiveTools([...active, 'codemode'])
     }
+  }
 
-    const followUpMessages = runtime.queuedFollowUpUserMessages.splice(0)
-    for (const message of followUpMessages) {
-      sendQueuedUserMessage(message, 'followUp')
-    }
-  })
+  pi.on('session_start', enableCodemode)
 
-  pi.on('agent_end', (event) => {
-    if (runtime.commitWorkerRunning) {
-      runtime.latestCommitWorkerMessages = event.messages
-    }
-    runtime.agentEndWaiter?.(event.messages)
-    runtime.agentEndWaiter = undefined
-  })
-
-  pi.on('context', (event) => {
-    return {
-      messages: event.messages.filter((message) => {
-        const customType = (message as { customType?: string }).customType
-        if (customType === MESSAGE_TYPE) return false
-        if (
-          customType === PROMPT_MESSAGE_TYPE &&
-          !runtime.commitWorkerRunning
-        ) {
-          return false
-        }
-        return true
-      })
-    }
-  })
-
-  pi.on('session_start', async (_event, ctx) => {
+  // Input runs before template expansion. Invalid options/configuration or a
+  // missing runtime never reach the model through the slash command.
+  pi.on('input', async (event, ctx) => {
+    const command = event.text.trim().match(/^\/commit(?:\s+([\s\S]*))?$/)
+    if (!command) return { action: 'continue' }
     try {
-      runtime.cachedConfig = await loadConfigForContext(ctx)
+      enableCodemode()
+      await prepareCommitRequest(command[1], ctx, pi)
+      return { action: 'continue' }
     } catch (error) {
-      runtime.cachedConfig = DEFAULT_COMMIT_CONFIG
-      ctx.ui.notify(errorMessage(error), 'warning')
+      ctx.ui.notify(errorMessage(error), 'error')
+      return { action: 'handled' }
     }
   })
 
-  pi.on('session_shutdown', () => {
-    releaseRuntimeKey?.()
-    if (registry.get(runtimeKey) === runtime) registry.delete(runtimeKey)
-  })
-
-  async function sendResultAtSourceLeaf(
-    ctx: ExtensionCommandContext,
-    sourceLeafId: string | null | undefined,
-    message: {
-      customType: string
-      content: string
-      display: boolean
-      details?: CommitResultDetails
-    }
-  ) {
-    // `agent_end` fires before the session has fully left streaming mode. If we
-    // send while streaming, pi treats this as steering/follow-up input instead
-    // of appending a visible custom message, so it may only show on the next
-    // user turn. Wait until idle before writing the result entry.
-    if (!ctx.isIdle()) {
-      await ctx.waitForIdle()
+  pi.on('before_agent_start', async (event, ctx) => {
+    const guidelines = (event.systemPromptOptions.promptGuidelines ??= [])
+    if (!guidelines.includes(COMMIT_AUTHORIZATION_POLICY)) {
+      guidelines.push(COMMIT_AUTHORIZATION_POLICY)
     }
 
-    pi.sendMessage(message)
-
-    // Keep the result attached to the source point, but leave the active leaf
-    // at the original source so the next user message branches from there.
-    const currentLeafId = ctx.sessionManager.getLeafId()
-    if (sourceLeafId && currentLeafId && currentLeafId !== sourceLeafId) {
-      await ctx.navigateTree(sourceLeafId, { summarize: false })
-    }
-  }
-
-  pi.registerMessageRenderer<CommitResultDetails>(
-    MESSAGE_TYPE,
-    (message, _options, theme) => {
-      const details = message.details
-      const c = new Container()
-      const displayStatus = getDisplayStatus(
-        typeof message.content === 'string' ? message.content : '',
-        details?.status
+    const sections = event.systemPromptOptions.sections
+    delete sections.commit_request
+    if (!event.prompt.startsWith(ARGUMENTS_PREFIX)) return
+    const end = event.prompt.indexOf(ARGUMENTS_END, ARGUMENTS_PREFIX.length)
+    try {
+      if (end < 0)
+        throw new Error('Malformed /commit prompt. Stop without changes.')
+      enableCodemode()
+      sections.commit_request = await prepareCommitRequest(
+        event.prompt.slice(ARGUMENTS_PREFIX.length, end),
+        ctx,
+        pi
       )
-      const statusLabel =
-        displayStatus === 'cancelled'
-          ? theme.fg('warning', 'cancelled')
-          : displayStatus === 'failed'
-            ? theme.fg('error', 'failed')
-            : theme.fg('success', 'ok')
-
-      c.addChild(
-        new Text(
-          `${statusLabel} ${theme.fg('toolTitle', theme.bold('commit'))}${details?.mode === 'stacked' ? ` ${theme.fg('accent', 'stacked')}` : ''}${details?.changeType ? ` ${theme.fg('accent', details.changeType)}` : ''}`,
-          0,
-          0
-        )
-      )
-
-      if (details?.userContext) {
-        c.addChild(
-          new Text(theme.fg('dim', `Context: ${details.userContext}`), 0, 0)
-        )
-      }
-
-      c.addChild(new Spacer(1))
-      c.addChild(
-        new Markdown(
-          typeof message.content === 'string' ? message.content : '',
-          0,
-          0,
-          getMarkdownTheme()
-        )
-      )
-
-      if (details?.workerLeafId) {
-        c.addChild(new Spacer(1))
-        c.addChild(
-          new Text(
-            theme.fg('dim', `Worker branch: ${details.workerLeafId}`),
-            0,
-            0
-          )
-        )
-      }
-
-      return c
-    }
-  )
-
-  pi.registerCommand('commit', {
-    description:
-      'Commit on an isolated context branch, then push and optionally manage a PR.',
-    getArgumentCompletions: (prefix) =>
-      getCommitArgumentCompletions(prefix, runtime.cachedConfig),
-    handler: async (args, ctx) => {
-      if (runtime.commitCommandPending || runtime.commitWorkerRunning) {
-        ctx.ui.notify('Commit command is already active', 'warning')
-        return
-      }
-
-      runtime.commitCommandPending = true
-      let prepared: Awaited<ReturnType<typeof prepareCommit>>
-      try {
-        prepared = await prepareCommit(args, ctx, runtime)
-      } catch (error) {
-        runtime.commitCommandPending = false
-        ctx.ui.notify(errorMessage(error), 'error')
-        return
-      }
-
-      if (!prepared) {
-        runtime.commitCommandPending = false
-        return
-      }
-
-      const { parsed, prompt } = prepared
-      const startLeafId = ctx.sessionManager.getLeafId()
-
-      // Establish the running guard before releasing the pending guard. Keeping
-      // this transition synchronous prevents a re-entrant command from starting
-      // a second worker and overwriting the singleton agent-end waiter.
-      runtime.commitWorkerRunning = true
-      runtime.commitCommandPending = false
-
-      try {
-        showCommitWorkerBanner(ctx)
-        ctx.ui.notify(
-          `Starting commit worker (${parsed.mode === 'stacked' ? 'stacked ' : ''}${parsed.changeType}${parsed.pullRequest === 'never' ? ', no PR' : ''})`,
-          'info'
-        )
-
-        const agentEnd = waitForNextAgentEndAfterIdle(ctx, runtime)
-        runtime.latestCommitWorkerMessages = undefined
-        pi.sendMessage(
-          {
-            customType: PROMPT_MESSAGE_TYPE,
-            content: prompt,
-            display: false,
-            details: {
-              changeType: parsed.changeType,
-              mode: parsed.mode,
-              userContext: parsed.context
-            }
-          },
-          { triggerTurn: true, deliverAs: 'followUp' }
-        )
-        const messages = await agentEnd
-
-        const workerLeafId = ctx.sessionManager.getLeafId()
-        const workerPromptIndex = findLastCustomMessageIndex(
-          messages,
-          PROMPT_MESSAGE_TYPE
-        )
-        const summary =
-          workerPromptIndex >= 0
-            ? extractLastAssistantText(messages, workerPromptIndex)
-            : ''
-        const assistantError =
-          workerPromptIndex >= 0
-            ? extractLastAssistantError(messages, workerPromptIndex)
-            : undefined
-
-        if (assistantError) {
-          if (startLeafId && workerLeafId && workerLeafId !== startLeafId) {
-            await ctx.navigateTree(startLeafId, { summarize: false })
-          }
-          await sendResultAtSourceLeaf(ctx, startLeafId, {
-            customType: MESSAGE_TYPE,
-            content: formatWorkerErrorResult(assistantError, summary),
-            display: true,
-            details: {
-              changeType: parsed.changeType,
-              mode: parsed.mode,
-              userContext: parsed.context,
-              workerLeafId,
-              status: 'failed'
-            }
-          })
-          ctx.ui.notify(`Commit worker failed:\n${assistantError}`, 'error')
-          return
-        }
-
-        if (!summary) {
-          if (startLeafId && workerLeafId && workerLeafId !== startLeafId) {
-            await ctx.navigateTree(startLeafId, { summarize: false })
-          }
-          await sendResultAtSourceLeaf(ctx, startLeafId, {
-            customType: MESSAGE_TYPE,
-            content:
-              'status: cancelled\nnotes: Commit command was cancelled before the worker produced a result.',
-            display: true,
-            details: {
-              changeType: parsed.changeType,
-              mode: parsed.mode,
-              userContext: parsed.context,
-              workerLeafId,
-              status: 'cancelled'
-            }
-          })
-          ctx.ui.notify('Commit command cancelled', 'warning')
-          return
-        }
-
-        if (startLeafId && workerLeafId && workerLeafId !== startLeafId) {
-          const nav = await ctx.navigateTree(startLeafId, { summarize: false })
-          if (nav.cancelled) {
-            pi.sendMessage({
-              customType: MESSAGE_TYPE,
-              content:
-                'status: cancelled\nnotes: Commit worker finished, but returning to the original branch was cancelled.',
-              display: true,
-              details: {
-                changeType: parsed.changeType,
-                mode: parsed.mode,
-                userContext: parsed.context,
-                workerLeafId,
-                status: 'cancelled'
-              }
-            })
-            ctx.ui.notify(
-              'Commit finished, but tree navigation was cancelled',
-              'warning'
-            )
-            return
-          }
-        }
-
-        const displayStatus = getDisplayStatus(summary)
-        await sendResultAtSourceLeaf(ctx, startLeafId, {
-          customType: MESSAGE_TYPE,
-          content: summary,
-          display: true,
-          details: {
-            changeType: parsed.changeType,
-            mode: parsed.mode,
-            userContext: parsed.context,
-            workerLeafId,
-            status: displayStatus
-          }
-        })
-        ctx.ui.notify(
-          formatCommitNotification(summary, displayStatus),
-          displayStatus === 'failed'
-            ? 'error'
-            : displayStatus === 'cancelled'
-              ? 'warning'
-              : 'info'
-        )
-      } catch (error) {
-        const message = errorMessage(error)
-        if (startLeafId) {
-          await ctx.navigateTree(startLeafId, { summarize: false })
-        }
-        await sendResultAtSourceLeaf(ctx, startLeafId, {
-          customType: MESSAGE_TYPE,
-          content: `Commit worker failed: ${message}`,
-          display: true,
-          details: {
-            changeType: parsed.changeType,
-            mode: parsed.mode,
-            userContext: parsed.context,
-            status: 'failed'
-          }
-        })
-        ctx.ui.notify(`Commit worker failed:\n${message}`, 'error')
-      } finally {
-        ctx.ui.setWidget(COMMIT_WORKER_WIDGET_KEY, undefined)
-        runtime.commitWorkerRunning = false
-        runtime.latestCommitWorkerMessages = undefined
-
-        const returnedToSourceBranch =
-          Boolean(startLeafId) && ctx.sessionManager.getLeafId() === startLeafId
-        if (returnedToSourceBranch && runtime.queuedUserMessages.length > 0) {
-          const queuedMessageCount = runtime.queuedUserMessages.length
-          ctx.ui.notify(
-            `Commit worker exited; releasing ${queuedMessageCount} queued message${queuedMessageCount === 1 ? '' : 's'}`,
-            'info'
-          )
-          releaseQueuedUserMessages()
-        } else if (runtime.queuedUserMessages.length > 0) {
-          ctx.ui.notify(
-            `${runtime.queuedUserMessages.length} message${runtime.queuedUserMessages.length === 1 ? ' remains' : 's remain'} queued because the commit worker branch could not be exited`,
-            'warning'
-          )
-        }
-      }
+    } catch (error) {
+      // Revalidate after expansion as configuration/tool availability may have
+      // changed since input. This path is model-directed, not a permission gate.
+      sections.commit_request = `Request blocked: ${errorMessage(error)}\nStop without Git/GitHub changes and report the blocker.`
     }
   })
 }
 
-function showCommitWorkerBanner(ctx: ExtensionCommandContext) {
-  const message = 'Commit worker running on a side branch of this session…'
-
-  if (ctx.mode !== 'tui') {
-    ctx.ui.setWidget(COMMIT_WORKER_WIDGET_KEY, [message])
-    return
-  }
-
-  ctx.ui.setWidget(
-    COMMIT_WORKER_WIDGET_KEY,
-    (_tui, theme) => new Text(theme.fg('warning', message), 1, 0)
-  )
-}
-
-async function prepareCommit(
+async function prepareCommitRequest(
   args: string | undefined,
-  ctx: ExtensionCommandContext,
-  runtime: CommitRuntime
+  ctx: ExtensionContext,
+  pi: ExtensionAPI
 ) {
-  const config = await loadConfigForContext(ctx)
-  runtime.cachedConfig = config
-  const unresolved = parseCommitArguments(args, config)
-  const parsed = await resolveChangeTypeAndContext(unresolved, config, ctx)
-  if (!parsed) return null
-
-  if (!ctx.isIdle()) {
-    ctx.ui.notify(
-      'Commit queued; waiting for the current agent turn to finish',
-      'info'
+  const active = pi.getActiveTools()
+  if (!active.includes('codemode') || !active.includes('bash')) {
+    throw new Error(
+      '/commit requires current Pi with built-in Codemode and an active Bash tool.'
     )
   }
-
-  await ctx.waitForIdle()
-  const prompt = await buildWorkerPrompt(parsed, config)
-  // Prompt loading is asynchronous. Re-check idle so another user turn cannot
-  // slip in between the original wait and worker startup.
-  await ctx.waitForIdle()
-
-  return { parsed, prompt }
-}
-
-async function resolveChangeTypeAndContext(
-  parsed: ReturnType<typeof parseCommitArguments>,
-  config: ResolvedCommitConfig,
-  ctx: ExtensionCommandContext
-): Promise<ResolvedCommitArguments | null> {
-  if (parsed.changeType) {
-    return { ...parsed, changeType: parsed.changeType }
-  }
-
-  const options = changeTypeOptions(config)
-  const selected = await ctx.ui.select(
-    'Change type',
-    options.map((option) => option.label)
-  )
-  if (!selected) return null
-
-  const option = options.find(
-    (item) => selected === item.label || selected.startsWith(`${item.type} -`)
-  )
-  if (!option) return null
-
-  return { ...parsed, changeType: option.type }
-}
-
-async function buildWorkerPrompt(
-  parsed: ResolvedCommitArguments,
-  config: ResolvedCommitConfig
-) {
-  const extensionDir = dirname(fileURLToPath(import.meta.url))
-  const customPolicy = renderCustomFormatPolicy(config, parsed.changeType)
-  const [template, opinionatedPolicy] = await Promise.all([
-    readFile(join(extensionDir, 'worker-prompt.md'), 'utf8'),
-    customPolicy
-      ? Promise.resolve('')
-      : readFile(join(extensionDir, 'opinionated-format.md'), 'utf8')
-  ])
-  const formatPolicy = customPolicy ?? opinionatedPolicy
-
-  return template
-    .replaceAll('{{mode}}', parsed.mode)
-    .replaceAll('{{pullRequestBehavior}}', parsed.pullRequest)
-    .replaceAll('{{changeType}}', parsed.changeType)
-    .replaceAll('{{userContext}}', parsed.context || '(none)')
-    .replaceAll('{{formatPolicy}}', formatPolicy)
-    .replaceAll('{{rules}}', formatPolicy)
-}
-
-function waitForNextAgentEndAfterIdle(
-  ctx: ExtensionCommandContext,
-  runtime: CommitRuntime
-) {
-  return new Promise<unknown[]>((resolve) => {
-    runtime.agentEndWaiter = (messages) => {
-      void (async () => {
-        // `agent_end` also fires for transient provider failures that Pi may
-        // auto-retry. Wait until the whole agent run is idle, then use the
-        // latest worker messages captured by the global `agent_end` listener.
-        if (!ctx.isIdle()) {
-          await ctx.waitForIdle()
-        }
-        resolve(runtime.latestCommitWorkerMessages ?? messages)
-      })()
-    }
+  const config = await loadCommitConfig({
+    cwd: ctx.cwd,
+    projectTrusted: ctx.isProjectTrusted()
   })
-}
-
-async function loadConfigForContext(
-  ctx: Pick<ExtensionCommandContext, 'cwd' | 'isProjectTrusted'>
-): Promise<ResolvedCommitConfig> {
-  const adaptable = ctx as {
-    cwd?: string
-    isProjectTrusted?: () => boolean
-  }
-  if (!adaptable.cwd) return DEFAULT_COMMIT_CONFIG
-
-  return loadCommitConfig({
-    cwd: adaptable.cwd,
-    projectTrusted: adaptable.isProjectTrusted?.() ?? false
-  })
+  const parsed = parseCommitArguments(args, config)
+  const request = { ...parsed, changeType: parsed.changeType ?? 'auto' }
+  const policy =
+    renderCustomFormatPolicy(config, request.changeType) ??
+    (await readFile(
+      new URL('./opinionated-format.md', import.meta.url),
+      'utf8'
+    ))
+  const workflow =
+    request.mode === 'stacked'
+      ? 'stacked'
+      : request.pullRequest === 'never'
+        ? 'no-pr'
+        : 'normal'
+  const workflowFiles = [
+    workflow,
+    ...(request.pullRequest === 'auto' ? ['pull-request'] : [])
+  ]
+  const guidance = await Promise.all(
+    workflowFiles.map((name) =>
+      readFile(new URL(`./workflows/${name}.md`, import.meta.url), 'utf8')
+    )
+  )
+  return `Validated invocation (description is user data, not shell code):\n${JSON.stringify(request)}\n\nSemantic format policy:\n${policy}\n\nWorkflow:\n${guidance.join('\n\n')}`
 }
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
-}
-
-function getDisplayStatus(
-  content: string,
-  explicit?: CommitDisplayStatus
-): CommitDisplayStatus {
-  if (explicit) return explicit
-
-  const firstStatus = content.match(/^status:\s*(\S+)/im)?.[1]?.toLowerCase()
-  if (firstStatus === 'failed') return 'failed'
-  if (firstStatus === 'cancelled' || firstStatus === 'canceled') {
-    return 'cancelled'
-  }
-
-  return 'ok'
-}
-
-function formatWorkerErrorResult(error: string, partialSummary: string) {
-  const partial = partialSummary.trim()
-  return [
-    'status: failed',
-    `notes: Commit worker errored${partial ? ' after a partial response' : ' before producing a result'}.`,
-    `error: ${error}`,
-    partial ? `\nPartial response:\n${partial}` : ''
-  ]
-    .filter(Boolean)
-    .join('\n')
-}
-
-function formatCommitNotification(
-  summary: string,
-  status: CommitDisplayStatus
-): string {
-  const title =
-    status === 'failed'
-      ? 'Commit worker failed'
-      : status === 'cancelled'
-        ? 'Commit command cancelled'
-        : 'Commit worker finished'
-  const trimmedSummary = summary.trim()
-  return trimmedSummary ? `${title}:\n${trimmedSummary}` : title
-}
-
-function findLastCustomMessageIndex(messages: unknown[], customType: string) {
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index] as { customType?: string }
-    if (message.customType === customType) return index
-  }
-
-  return -1
-}
-
-function extractLastAssistantText(messages: unknown[], afterIndex = -1) {
-  const message = findLastAssistantMessage(messages, afterIndex)
-  return message ? extractTextFromContent(message.content).trim() : ''
-}
-
-function extractLastAssistantError(messages: unknown[], afterIndex = -1) {
-  const message = findLastAssistantMessage(messages, afterIndex)
-  if (message?.stopReason !== 'error') return undefined
-
-  return message.errorMessage?.trim() || 'Unknown provider error'
-}
-
-function findLastAssistantMessage(messages: unknown[], afterIndex = -1) {
-  for (let index = messages.length - 1; index > afterIndex; index--) {
-    const message = messages[index] as {
-      role?: string
-      content?: unknown
-      stopReason?: string
-      errorMessage?: string
-    }
-    if (message.role === 'assistant') return message
-  }
-
-  return undefined
-}
-
-function extractTextFromContent(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-
-  return content
-    .map((part) => {
-      if (
-        part &&
-        typeof part === 'object' &&
-        'type' in part &&
-        part.type === 'text' &&
-        'text' in part &&
-        typeof part.text === 'string'
-      ) {
-        return part.text
-      }
-      return ''
-    })
-    .filter(Boolean)
-    .join('\n')
 }

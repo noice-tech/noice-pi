@@ -26,9 +26,11 @@ Commit the resulting `.pi/settings.json` change to install it for collaborators 
 | `/commit --no-pr [type] [summary]` | Commits and pushes without reading or changing a pull request.    |
 | `/commit stacked [type] [summary]` | Creates a child branch and PR above the current branch's open PR. |
 
-Add `--pr` to override no-PR configuration for one run. Leave out the type to choose it interactively, or use `auto` to let the worker infer it. A supplied summary is the primary wording source and is checked against the current diff.
+Add `--pr` to override no-PR configuration for one run. Leave out the type, or use `auto`, to let the model infer it. A supplied summary is the primary wording source and is checked against the current diff.
 
-`/commit` runs its worker on a separate branch of Pi's session tree, so commit and PR work does not consume your active coding context. You return to the same conversation, and the worker transcript remains available in the session tree.
+`/commit` is a prompt template that runs in your active conversation. A small extension enables Codemode, validates options and trusted configuration, and supplies the format policy and only the selected workflow (normal PR, no-PR, or stacked). Codemode filters command noise before it reaches the model; relevant evidence and the final branch, commit, push, PR, and remaining-worktree state stay in context for the next coding turn.
+
+Commit authorization ends after the result. The model is instructed not to commit, push, or change PR metadata again without fresh explicit user authorization. This is a behavioral instruction, not a permission system. There is no worker branch, context filtering, interactive type picker, or custom argument completion; Pi's normal input/steering behavior applies.
 
 ## Defaults
 
@@ -84,19 +86,20 @@ Or replace it with project-specific change types:
 Each change type needs:
 
 - `name` — a unique lowercase identifier using letters, digits, and hyphens; `auto` and `stacked` are reserved
-- `description` — guidance shown when selecting and applying the type
-- `public` — whether the worker must write a standalone public changelog summary; non-public types write `None.`
+- `description` — guidance for classifying and applying the type
+- `public` — whether the model must write a standalone public changelog summary; non-public types write `None.`
 
-`instructions` tells the worker how to format commit and PR titles. It cannot override the commit workflow or public-summary rules.
+`instructions` tells the model how to format commit and PR titles. It cannot override the commit workflow or public-summary rules.
 
 You may combine both settings in one file. Unknown fields, malformed JSON, and invalid values stop `/commit` before any Git or GitHub changes.
 
 ## Requirements
 
+- Pi 1.0 or newer, with its built-in Codemode extension available and Bash active
 - Git and a remote you can push to
-- PR mode: authenticated [GitHub CLI](https://cli.github.com/) and `jq`
+- PR mode: authenticated [GitHub CLI](https://cli.github.com/)
 - Stacked mode: the [`github/gh-stack`](https://github.com/github/gh-stack) extension
 
-Every commit mode pushes. PR mode can create or update a pull request. Stacked mode must start from the published top of a valid stack and can leave a branch, commit, push, or PR behind if a later step fails; the worker reports any partial state.
+Every commit mode pushes. PR mode can create or update a pull request. Stacked mode must start from the published top of a valid stack and can leave a branch, commit, push, or PR behind if a later step fails; the model reports any partial state.
 
-The worker sends relevant session and repository context to your selected model. Review your model provider's privacy settings before using it with sensitive code.
+The workflow sends relevant session and repository context to your selected model. Review your model provider's privacy settings before using it with sensitive code.
