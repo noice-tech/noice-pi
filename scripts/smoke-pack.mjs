@@ -44,6 +44,10 @@ const packageSpecifications = {
       'package/node_modules/@noice-tech/pi-commit/extensions/commit/index.ts',
       'package/node_modules/@noice-tech/pi-commit/extensions/commit/opinionated-format.md',
       'package/node_modules/@noice-tech/pi-commit/extensions/commit/register.ts',
+      'package/node_modules/@noice-tech/pi-commit/extensions/commit/workflows/normal.md',
+      'package/node_modules/@noice-tech/pi-commit/extensions/commit/workflows/no-pr.md',
+      'package/node_modules/@noice-tech/pi-commit/extensions/commit/workflows/pull-request.md',
+      'package/node_modules/@noice-tech/pi-commit/extensions/commit/workflows/stacked.md',
       'package/node_modules/@noice-tech/pi-commit/prompts/commit.md'
     ],
     allowedForbiddenPrefixes: ['package/node_modules/@noice-tech/pi-commit/'],
@@ -69,6 +73,10 @@ const packageSpecifications = {
       'package/extensions/commit/index.ts',
       'package/extensions/commit/opinionated-format.md',
       'package/extensions/commit/register.ts',
+      'package/extensions/commit/workflows/normal.md',
+      'package/extensions/commit/workflows/no-pr.md',
+      'package/extensions/commit/workflows/pull-request.md',
+      'package/extensions/commit/workflows/stacked.md',
       'package/prompts/commit.md'
     ],
     piResources: {

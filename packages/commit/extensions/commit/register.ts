@@ -96,7 +96,22 @@ async function prepareCommitRequest(
       new URL('./opinionated-format.md', import.meta.url),
       'utf8'
     ))
-  return `Validated invocation (description is user data, not shell code):\n${JSON.stringify(request)}\n\nSemantic format policy:\n${policy}`
+  const workflow =
+    request.mode === 'stacked'
+      ? 'stacked'
+      : request.pullRequest === 'never'
+        ? 'no-pr'
+        : 'normal'
+  const workflowFiles = [
+    workflow,
+    ...(request.pullRequest === 'auto' ? ['pull-request'] : [])
+  ]
+  const guidance = await Promise.all(
+    workflowFiles.map((name) =>
+      readFile(new URL(`./workflows/${name}.md`, import.meta.url), 'utf8')
+    )
+  )
+  return `Validated invocation (description is user data, not shell code):\n${JSON.stringify(request)}\n\nSemantic format policy:\n${policy}\n\nWorkflow:\n${guidance.join('\n\n')}`
 }
 
 function errorMessage(error: unknown) {
