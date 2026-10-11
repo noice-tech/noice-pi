@@ -72,7 +72,7 @@ Use this section only in `normal` mode when selected pull request behavior is `n
 5. Commit only the intended changes using the selected semantic format policy. Do not modify source files except when absolutely required to complete commit metadata.
 6. Push the branch, setting its upstream when required. This mode intentionally pushes even though it does not create a pull request.
 7. Leave any existing pull request title, body, base, and state untouched.
-8. In the five-line result, report the real commit, report `pr: none`, and put relevant push/branch details in `notes:`.
+8. In the result, report the real commit, report `pr: skipped (--no-pr); no PR inspection or modification performed`, and report the branch and push actions explicitly.
 
 The no-PR workflow has no GitHub CLI requirement. Any instruction elsewhere in this prompt to call `gh`, inspect a PR, infer a PR base, prepare a PR body, or submit a stack does not apply to this route.
 
@@ -251,15 +251,21 @@ Failure behavior:
 
 - Fail before `gh stack add` whenever any precondition is not met.
 - After `gh stack add`, a failure may leave a tracked local child branch, child commit, pushed branch, or unsubmitted child PR. Never automatically delete, close, reset, rewrite, or reuse that state because this invocation may not provably own it.
-- On such a failure, inspect and report the exact child branch, commit, push, and PR state that exists, with concise manual recovery guidance. Return `status: failed`; include real commit and PR values on their output lines when they exist.
+- On such a failure, inspect and report the exact child branch, commit, push, and PR state that exists, with concise manual recovery guidance. Return `status: failed`; include real branch, commit, push, and PR state on their output lines when they exist.
 
 Final output:
-Return exactly five lines, with real values only:
+Your result is shown to the user and retained in the coding agent's conversation. Report what happened, not how this worker was invoked. Do not mention `/commit`, the worker, or the Pi session tree in this result.
 
-- Line 1 starts with `status:` followed by exactly one of these words: `committed`, `updated_pr`, `no_changes`, or `failed`.
-- Line 2 starts with `commit:` followed by the actual short SHA and commit message, or `none`.
-- Line 3 starts with `pr:` followed by the actual PR number, title, and URL, or `none`.
-- Line 4 starts with `verification:` followed by commands run, or `Not run`.
-- Line 5 starts with `notes:` followed by important caveats, or `none`.
+Start with a short factual paragraph describing the user's completed actions. For example: "The user created branch fix/export-presets, committed the changes, pushed the branch, and opened PR #142." For an existing branch/PR, say that the user committed on that branch, pushed it, and updated the PR. Mention only actions that really occurred. For no-op, say no changes were made. For failure, state which actions succeeded and which failed or were not attempted; do not imply that completed actions were undone.
 
-Do not include a fenced code block. Do not explain the format. Do not include the words `one of`, `actual`, `followed by`, or any placeholder text.
+After a blank line, return these seven fields, with real values only:
+
+- `status:` exactly one of `committed`, `updated_pr`, `no_changes`, or `failed`.
+- `branch:` resulting Git branch, whether it was created or reused, and whether it is now checked out. Include the starting branch when a branch was created; in stacked mode identify the parent/base branch. Use `unknown` for unverified state.
+- `commit:` actual short SHA and commit message, or `none` if no commit was made. Use `unknown` when a failure prevents confirming the result.
+- `push:` `pushed` with the remote/branch, `already up to date`, `not attempted`, or `failed` with the reason. Use `unknown` for unverified state; a successful local commit does not prove a push succeeded.
+- `pr:` `created`, `updated`, or `unchanged` with the PR number, title, and URL when known; `skipped (--no-pr); no PR inspection or modification performed` for no-PR mode; `not attempted`, `none`, or `failed` with the reason otherwise. Include a real PR that exists after a partial failure and distinguish its existence from whether creation/update succeeded. Use `unknown` for unverified state.
+- `verification:` commands run and their outcomes, or `Not run`.
+- `notes:` important caveats or manual recovery guidance, or `none`.
+
+Keep the result compact. Do not include a fenced code block, placeholders, or instructions to continue the workflow. The extension adds the reminder that further commits, pushes, or PR changes require a new user request.

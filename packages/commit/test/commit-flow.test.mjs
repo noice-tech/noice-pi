@@ -4,7 +4,7 @@ import test from 'node:test'
 import piCommitExtension from '../extensions/commit/index.ts'
 
 const PROMPT_MESSAGE_TYPE = 'noice-changelog-commit-worker-prompt'
-const RESULT_MESSAGE_TYPE = 'noice-changelog-commit-result'
+const RESULT_MESSAGE_TYPE = 'pi-commit-result'
 
 test('/commit selects immediately, then waits for the active turn', async () => {
   const events = []
@@ -39,6 +39,7 @@ test('/commit selects immediately, then waits for the active turn', async () => 
       if (name === 'commit') command = registered
     },
     registerMessageRenderer() {},
+    appendEntry() {},
     getThinkingLevel() {
       return thinkingLevel
     },
@@ -51,7 +52,10 @@ test('/commit selects immediately, then waits for the active turn', async () => 
       sentMessages.push({ message, options })
       events.push(`send:${message.customType}`)
 
-      if (message.customType !== PROMPT_MESSAGE_TYPE) return
+      if (message.customType !== PROMPT_MESSAGE_TYPE) {
+        leafId = 'result-leaf'
+        return
+      }
 
       leafId = 'worker-leaf'
       setIdle(false)
@@ -186,10 +190,13 @@ test('/commit queues user input until it returns to the source branch', async ()
       if (name === 'commit') command = registered
     },
     registerMessageRenderer() {},
+    appendEntry() {},
     sendMessage(message) {
       if (message.customType === PROMPT_MESSAGE_TYPE) {
         leafId = 'worker-leaf'
         workerStartedResolve()
+      } else {
+        leafId = 'result-leaf'
       }
     },
     sendUserMessage(content) {
@@ -268,7 +275,7 @@ test('/commit queues user input until it returns to the source branch', async ()
   }
   await commandPromise
 
-  assert.equal(leafId, 'source-leaf')
+  assert.equal(leafId, 'result-leaf')
   assert.deepEqual(releasedUserMessages, [
     [{ type: 'text', text: 'First queued request' }, image]
   ])

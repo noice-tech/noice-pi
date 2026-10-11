@@ -1,7 +1,8 @@
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
-  InputEvent
+  InputEvent,
+  MessageRenderer
 } from '@earendil-works/pi-coding-agent'
 import { getMarkdownTheme } from '@earendil-works/pi-coding-agent'
 import { Container, Markdown, Spacer, Text } from '@earendil-works/pi-tui'
@@ -23,8 +24,12 @@ import {
   type ResolvedCommitConfig
 } from './config.ts'
 
-const MESSAGE_TYPE = 'noice-changelog-commit-result'
+const MESSAGE_TYPE = 'pi-commit-result'
+const LEGACY_MESSAGE_TYPE = 'noice-changelog-commit-result'
 const PROMPT_MESSAGE_TYPE = 'noice-changelog-commit-worker-prompt'
+const SOURCE_ENTRY_TYPE = 'noice-commit-source'
+const RESULT_BOUNDARY =
+  'These actions are complete. Further commits, pushes, or PR changes require a new user request.'
 const COMMIT_WORKER_WIDGET_KEY = 'noice-changelog-commit-worker'
 
 type CommitDisplayStatus = 'ok' | 'cancelled' | 'failed'
@@ -159,7 +164,6 @@ export function registerCommit(pi: ExtensionAPI): void {
     return {
       messages: event.messages.filter((message) => {
         const customType = (message as { customType?: string }).customType
-        if (customType === MESSAGE_TYPE) return false
         if (
           customType === PROMPT_MESSAGE_TYPE &&
           !runtime.commitWorkerRunning
@@ -203,70 +207,93 @@ export function registerCommit(pi: ExtensionAPI): void {
       await ctx.waitForIdle()
     }
 
-    pi.sendMessage(message)
-
-    // Keep the result attached to the source point, but leave the active leaf
-    // at the original source so the next user message branches from there.
-    const currentLeafId = ctx.sessionManager.getLeafId()
-    if (sourceLeafId && currentLeafId && currentLeafId !== sourceLeafId) {
-      await ctx.navigateTree(sourceLeafId, { summarize: false })
+    let returnedToSource = ctx.sessionManager.getLeafId() === sourceLeafId
+    let navigationNote = ''
+    if (sourceLeafId && !returnedToSource) {
+      try {
+        const nav = await ctx.navigateTree(sourceLeafId, { summarize: false })
+        returnedToSource =
+          !nav.cancelled && ctx.sessionManager.getLeafId() === sourceLeafId
+        if (!returnedToSource) {
+          navigationNote = 'Returning to the coding conversation was cancelled.'
+        }
+      } catch (error) {
+        navigationNote = `Returning to the coding conversation failed: ${errorMessage(error)}`
+      }
+      if (navigationNote) {
+        ctx.ui.notify(navigationNote, 'warning')
+        navigationNote = `\n\nSession navigation: ${navigationNote} The reported Git/PR actions are not undone.`
+      }
     }
+
+    // Leave the result on the active path. It informs the next model request
+    // without triggering another turn or importing the worker transcript.
+    pi.sendMessage({
+      ...message,
+      content: `${message.content.trim()}${navigationNote}\n\n${RESULT_BOUNDARY}`
+    })
+    return returnedToSource
   }
 
-  pi.registerMessageRenderer<CommitResultDetails>(
-    MESSAGE_TYPE,
-    (message, _options, theme) => {
-      const details = message.details
-      const c = new Container()
-      const displayStatus = getDisplayStatus(
-        typeof message.content === 'string' ? message.content : '',
-        details?.status
-      )
-      const statusLabel =
-        displayStatus === 'cancelled'
-          ? theme.fg('warning', 'cancelled')
-          : displayStatus === 'failed'
-            ? theme.fg('error', 'failed')
-            : theme.fg('success', 'ok')
+  const renderResult: MessageRenderer<CommitResultDetails> = (
+    message,
+    _options,
+    theme
+  ) => {
+    const details = message.details
+    const c = new Container()
+    const displayStatus = getDisplayStatus(
+      typeof message.content === 'string' ? message.content : '',
+      details?.status
+    )
+    const statusLabel =
+      displayStatus === 'cancelled'
+        ? theme.fg('warning', 'cancelled')
+        : displayStatus === 'failed'
+          ? theme.fg('error', 'failed')
+          : theme.fg('success', 'ok')
 
+    c.addChild(
+      new Text(
+        `${statusLabel} ${theme.fg('toolTitle', theme.bold('commit'))}${details?.mode === 'stacked' ? ` ${theme.fg('accent', 'stacked')}` : ''}${details?.changeType ? ` ${theme.fg('accent', details.changeType)}` : ''}`,
+        0,
+        0
+      )
+    )
+
+    if (details?.userContext) {
+      c.addChild(
+        new Text(theme.fg('dim', `Context: ${details.userContext}`), 0, 0)
+      )
+    }
+
+    c.addChild(new Spacer(1))
+    c.addChild(
+      new Markdown(
+        typeof message.content === 'string' ? message.content : '',
+        0,
+        0,
+        getMarkdownTheme()
+      )
+    )
+
+    if (details?.workerLeafId) {
+      c.addChild(new Spacer(1))
       c.addChild(
         new Text(
-          `${statusLabel} ${theme.fg('toolTitle', theme.bold('commit'))}${details?.mode === 'stacked' ? ` ${theme.fg('accent', 'stacked')}` : ''}${details?.changeType ? ` ${theme.fg('accent', details.changeType)}` : ''}`,
+          theme.fg('dim', `Worker branch: ${details.workerLeafId}`),
           0,
           0
         )
       )
-
-      if (details?.userContext) {
-        c.addChild(
-          new Text(theme.fg('dim', `Context: ${details.userContext}`), 0, 0)
-        )
-      }
-
-      c.addChild(new Spacer(1))
-      c.addChild(
-        new Markdown(
-          typeof message.content === 'string' ? message.content : '',
-          0,
-          0,
-          getMarkdownTheme()
-        )
-      )
-
-      if (details?.workerLeafId) {
-        c.addChild(new Spacer(1))
-        c.addChild(
-          new Text(
-            theme.fg('dim', `Worker branch: ${details.workerLeafId}`),
-            0,
-            0
-          )
-        )
-      }
-
-      return c
     }
-  )
+
+    return c
+  }
+
+  pi.registerMessageRenderer(MESSAGE_TYPE, renderResult)
+  // Preserve styled results in sessions recorded before the message-type rename.
+  pi.registerMessageRenderer(LEGACY_MESSAGE_TYPE, renderResult)
 
   pi.registerCommand('commit', {
     description:
@@ -295,7 +322,11 @@ export function registerCommit(pi: ExtensionAPI): void {
       }
 
       const { parsed, prompt } = prepared
+      // Pi navigates to the parent of custom messages. A non-context checkpoint
+      // gives us an exact return target even after a result or in an empty session.
+      pi.appendEntry(SOURCE_ENTRY_TYPE)
       const startLeafId = ctx.sessionManager.getLeafId()
+      let returnedToSourceBranch = false
 
       // Establish the running guard before releasing the pending guard. Keeping
       // this transition synchronous prevents a re-entrant command from starting
@@ -342,53 +373,33 @@ export function registerCommit(pi: ExtensionAPI): void {
             : undefined
 
         if (assistantError) {
-          if (startLeafId && workerLeafId && workerLeafId !== startLeafId) {
-            await ctx.navigateTree(startLeafId, { summarize: false })
-          }
-          await sendResultAtSourceLeaf(ctx, startLeafId, {
-            customType: MESSAGE_TYPE,
-            content: formatWorkerErrorResult(assistantError, summary),
-            display: true,
-            details: {
-              changeType: parsed.changeType,
-              mode: parsed.mode,
-              userContext: parsed.context,
-              workerLeafId,
-              status: 'failed'
+          returnedToSourceBranch = await sendResultAtSourceLeaf(
+            ctx,
+            startLeafId,
+            {
+              customType: MESSAGE_TYPE,
+              content: formatWorkerErrorResult(assistantError, summary),
+              display: true,
+              details: {
+                changeType: parsed.changeType,
+                mode: parsed.mode,
+                userContext: parsed.context,
+                workerLeafId,
+                status: 'failed'
+              }
             }
-          })
-          ctx.ui.notify(`Commit worker failed:\n${assistantError}`, 'error')
+          )
           return
         }
 
         if (!summary) {
-          if (startLeafId && workerLeafId && workerLeafId !== startLeafId) {
-            await ctx.navigateTree(startLeafId, { summarize: false })
-          }
-          await sendResultAtSourceLeaf(ctx, startLeafId, {
-            customType: MESSAGE_TYPE,
-            content:
-              'status: cancelled\nnotes: Commit command was cancelled before the worker produced a result.',
-            display: true,
-            details: {
-              changeType: parsed.changeType,
-              mode: parsed.mode,
-              userContext: parsed.context,
-              workerLeafId,
-              status: 'cancelled'
-            }
-          })
-          ctx.ui.notify('Commit command cancelled', 'warning')
-          return
-        }
-
-        if (startLeafId && workerLeafId && workerLeafId !== startLeafId) {
-          const nav = await ctx.navigateTree(startLeafId, { summarize: false })
-          if (nav.cancelled) {
-            pi.sendMessage({
+          returnedToSourceBranch = await sendResultAtSourceLeaf(
+            ctx,
+            startLeafId,
+            {
               customType: MESSAGE_TYPE,
               content:
-                'status: cancelled\nnotes: Commit worker finished, but returning to the original branch was cancelled.',
+                'The operation was cancelled before a result was reported. Any Git/PR changes already made are unknown.\n\nstatus: cancelled\nnotes: No automatic rollback or retry was performed.',
               display: true,
               details: {
                 changeType: parsed.changeType,
@@ -397,60 +408,50 @@ export function registerCommit(pi: ExtensionAPI): void {
                 workerLeafId,
                 status: 'cancelled'
               }
-            })
-            ctx.ui.notify(
-              'Commit finished, but tree navigation was cancelled',
-              'warning'
-            )
-            return
-          }
+            }
+          )
+          return
         }
 
         const displayStatus = getDisplayStatus(summary)
-        await sendResultAtSourceLeaf(ctx, startLeafId, {
-          customType: MESSAGE_TYPE,
-          content: summary,
-          display: true,
-          details: {
-            changeType: parsed.changeType,
-            mode: parsed.mode,
-            userContext: parsed.context,
-            workerLeafId,
-            status: displayStatus
+        returnedToSourceBranch = await sendResultAtSourceLeaf(
+          ctx,
+          startLeafId,
+          {
+            customType: MESSAGE_TYPE,
+            content: summary,
+            display: true,
+            details: {
+              changeType: parsed.changeType,
+              mode: parsed.mode,
+              userContext: parsed.context,
+              workerLeafId,
+              status: displayStatus
+            }
           }
-        })
-        ctx.ui.notify(
-          formatCommitNotification(summary, displayStatus),
-          displayStatus === 'failed'
-            ? 'error'
-            : displayStatus === 'cancelled'
-              ? 'warning'
-              : 'info'
         )
       } catch (error) {
         const message = errorMessage(error)
-        if (startLeafId) {
-          await ctx.navigateTree(startLeafId, { summarize: false })
-        }
-        await sendResultAtSourceLeaf(ctx, startLeafId, {
-          customType: MESSAGE_TYPE,
-          content: `Commit worker failed: ${message}`,
-          display: true,
-          details: {
-            changeType: parsed.changeType,
-            mode: parsed.mode,
-            userContext: parsed.context,
-            status: 'failed'
+        returnedToSourceBranch = await sendResultAtSourceLeaf(
+          ctx,
+          startLeafId,
+          {
+            customType: MESSAGE_TYPE,
+            content: formatWorkerErrorResult(message, ''),
+            display: true,
+            details: {
+              changeType: parsed.changeType,
+              mode: parsed.mode,
+              userContext: parsed.context,
+              status: 'failed'
+            }
           }
-        })
-        ctx.ui.notify(`Commit worker failed:\n${message}`, 'error')
+        )
       } finally {
         ctx.ui.setWidget(COMMIT_WORKER_WIDGET_KEY, undefined)
         runtime.commitWorkerRunning = false
         runtime.latestCommitWorkerMessages = undefined
 
-        const returnedToSourceBranch =
-          Boolean(startLeafId) && ctx.sessionManager.getLeafId() === startLeafId
         if (returnedToSourceBranch && runtime.queuedUserMessages.length > 0) {
           const queuedMessageCount = runtime.queuedUserMessages.length
           ctx.ui.notify(
@@ -613,27 +614,14 @@ function getDisplayStatus(
 function formatWorkerErrorResult(error: string, partialSummary: string) {
   const partial = partialSummary.trim()
   return [
+    'The operation failed before a complete result was reported. Any unreported Git/PR changes are unknown.\n',
     'status: failed',
-    `notes: Commit worker errored${partial ? ' after a partial response' : ' before producing a result'}.`,
+    `notes: Commit worker errored${partial ? ' after a partial response' : ' before producing a result'}. No automatic rollback or retry was performed.`,
     `error: ${error}`,
     partial ? `\nPartial response:\n${partial}` : ''
   ]
     .filter(Boolean)
     .join('\n')
-}
-
-function formatCommitNotification(
-  summary: string,
-  status: CommitDisplayStatus
-): string {
-  const title =
-    status === 'failed'
-      ? 'Commit worker failed'
-      : status === 'cancelled'
-        ? 'Commit command cancelled'
-        : 'Commit worker finished'
-  const trimmedSummary = summary.trim()
-  return trimmedSummary ? `${title}:\n${trimmedSummary}` : title
 }
 
 function findLastCustomMessageIndex(messages: unknown[], customType: string) {

@@ -28,7 +28,7 @@ Commit the resulting `.pi/settings.json` change to install it for collaborators 
 
 Add `--pr` to override no-PR configuration for one run. Leave out the type to choose it interactively, or use `auto` to let the worker infer it. A supplied summary is the primary wording source and is checked against the current diff.
 
-`/commit` runs its worker on a separate branch of Pi's session tree, so commit and PR work does not consume your active coding context. You return to the same conversation, and the worker transcript remains available in the session tree.
+`/commit` runs its worker on a separate branch of Pi's session tree, keeping its execution transcript out of your active coding context. You return to the same conversation with a compact, persistent report of the branch, commit, push, and PR actions performed. Both you and the coding agent see that report, including any partial failure or unknown state; it does not trigger another agent turn or authorize further Git/PR changes. The full worker transcript remains available in the session tree.
 
 ## Defaults
 
