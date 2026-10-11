@@ -1,7 +1,8 @@
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
-  InputEvent
+  InputEvent,
+  MessageRenderer
 } from '@earendil-works/pi-coding-agent'
 import { getMarkdownTheme } from '@earendil-works/pi-coding-agent'
 import { Container, Markdown, Spacer, Text } from '@earendil-works/pi-tui'
@@ -23,7 +24,8 @@ import {
   type ResolvedCommitConfig
 } from './config.ts'
 
-const MESSAGE_TYPE = 'noice-changelog-commit-result'
+const MESSAGE_TYPE = 'pi-commit-result'
+const LEGACY_MESSAGE_TYPE = 'noice-changelog-commit-result'
 const PROMPT_MESSAGE_TYPE = 'noice-changelog-commit-worker-prompt'
 const SOURCE_ENTRY_TYPE = 'noice-commit-source'
 const RESULT_BOUNDARY =
@@ -233,60 +235,65 @@ export function registerCommit(pi: ExtensionAPI): void {
     return returnedToSource
   }
 
-  pi.registerMessageRenderer<CommitResultDetails>(
-    MESSAGE_TYPE,
-    (message, _options, theme) => {
-      const details = message.details
-      const c = new Container()
-      const displayStatus = getDisplayStatus(
-        typeof message.content === 'string' ? message.content : '',
-        details?.status
-      )
-      const statusLabel =
-        displayStatus === 'cancelled'
-          ? theme.fg('warning', 'cancelled')
-          : displayStatus === 'failed'
-            ? theme.fg('error', 'failed')
-            : theme.fg('success', 'ok')
+  const renderResult: MessageRenderer<CommitResultDetails> = (
+    message,
+    _options,
+    theme
+  ) => {
+    const details = message.details
+    const c = new Container()
+    const displayStatus = getDisplayStatus(
+      typeof message.content === 'string' ? message.content : '',
+      details?.status
+    )
+    const statusLabel =
+      displayStatus === 'cancelled'
+        ? theme.fg('warning', 'cancelled')
+        : displayStatus === 'failed'
+          ? theme.fg('error', 'failed')
+          : theme.fg('success', 'ok')
 
+    c.addChild(
+      new Text(
+        `${statusLabel} ${theme.fg('toolTitle', theme.bold('commit'))}${details?.mode === 'stacked' ? ` ${theme.fg('accent', 'stacked')}` : ''}${details?.changeType ? ` ${theme.fg('accent', details.changeType)}` : ''}`,
+        0,
+        0
+      )
+    )
+
+    if (details?.userContext) {
+      c.addChild(
+        new Text(theme.fg('dim', `Context: ${details.userContext}`), 0, 0)
+      )
+    }
+
+    c.addChild(new Spacer(1))
+    c.addChild(
+      new Markdown(
+        typeof message.content === 'string' ? message.content : '',
+        0,
+        0,
+        getMarkdownTheme()
+      )
+    )
+
+    if (details?.workerLeafId) {
+      c.addChild(new Spacer(1))
       c.addChild(
         new Text(
-          `${statusLabel} ${theme.fg('toolTitle', theme.bold('commit'))}${details?.mode === 'stacked' ? ` ${theme.fg('accent', 'stacked')}` : ''}${details?.changeType ? ` ${theme.fg('accent', details.changeType)}` : ''}`,
+          theme.fg('dim', `Worker branch: ${details.workerLeafId}`),
           0,
           0
         )
       )
-
-      if (details?.userContext) {
-        c.addChild(
-          new Text(theme.fg('dim', `Context: ${details.userContext}`), 0, 0)
-        )
-      }
-
-      c.addChild(new Spacer(1))
-      c.addChild(
-        new Markdown(
-          typeof message.content === 'string' ? message.content : '',
-          0,
-          0,
-          getMarkdownTheme()
-        )
-      )
-
-      if (details?.workerLeafId) {
-        c.addChild(new Spacer(1))
-        c.addChild(
-          new Text(
-            theme.fg('dim', `Worker branch: ${details.workerLeafId}`),
-            0,
-            0
-          )
-        )
-      }
-
-      return c
     }
-  )
+
+    return c
+  }
+
+  pi.registerMessageRenderer(MESSAGE_TYPE, renderResult)
+  // Preserve styled results in sessions recorded before the message-type rename.
+  pi.registerMessageRenderer(LEGACY_MESSAGE_TYPE, renderResult)
 
   pi.registerCommand('commit', {
     description:

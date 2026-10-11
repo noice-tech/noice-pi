@@ -60,14 +60,37 @@ test('an unrelated commit command does not suppress pi-commit', () => {
   )
 })
 
+test('current and legacy commit results share a renderer and remain model-visible', () => {
+  const harness = createRegistrationHarness()
+  registerCommit(harness.createApi())
+
+  const currentType = 'pi-commit-result'
+  const legacyType = 'noice-changelog-commit-result'
+  assert.equal(typeof harness.renderers.get(currentType), 'function')
+  assert.equal(
+    harness.renderers.get(currentType),
+    harness.renderers.get(legacyType)
+  )
+
+  const results = [currentType, legacyType].map((customType) => ({
+    role: 'custom',
+    customType,
+    content: 'The user committed the changes.'
+  }))
+  const context = harness.handlers.get('context')[0]({ messages: results })
+  assert.deepEqual(context.messages, results)
+})
+
 function createRegistrationHarness() {
   const handlers = new Map()
   const eventBus = createEventBus()
   const commandNames = []
+  const renderers = new Map()
 
   return {
     handlers,
     commandNames,
+    renderers,
     createApi() {
       return {
         events: eventBus,
@@ -77,7 +100,9 @@ function createRegistrationHarness() {
         registerCommand(name) {
           commandNames.push(name)
         },
-        registerMessageRenderer() {}
+        registerMessageRenderer(type, renderer) {
+          renderers.set(type, renderer)
+        }
       }
     }
   }

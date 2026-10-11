@@ -19,7 +19,7 @@ import {
 
 import piCommitExtension from '../extensions/commit/index.ts'
 
-const RESULT_TYPE = 'noice-changelog-commit-result'
+const RESULT_TYPE = 'pi-commit-result'
 const PROMPT_TYPE = 'noice-changelog-commit-worker-prompt'
 const BOUNDARY =
   'These actions are complete. Further commits, pushes, or PR changes require a new user request.'

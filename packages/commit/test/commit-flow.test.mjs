@@ -4,7 +4,7 @@ import test from 'node:test'
 import piCommitExtension from '../extensions/commit/index.ts'
 
 const PROMPT_MESSAGE_TYPE = 'noice-changelog-commit-worker-prompt'
-const RESULT_MESSAGE_TYPE = 'noice-changelog-commit-result'
+const RESULT_MESSAGE_TYPE = 'pi-commit-result'
 
 test('/commit selects immediately, then waits for the active turn', async () => {
   const events = []

@@ -4,7 +4,7 @@ import test from 'node:test'
 import piCommitExtension from '../extensions/commit/index.ts'
 
 const PROMPT_TYPE = 'noice-changelog-commit-worker-prompt'
-const RESULT_TYPE = 'noice-changelog-commit-result'
+const RESULT_TYPE = 'pi-commit-result'
 
 for (const [name, text, error, expectedStatus] of [
   [
