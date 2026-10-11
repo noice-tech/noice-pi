@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -9,7 +12,11 @@ import {
 
 import { registerCommit } from '../extensions/commit/register.ts'
 
-test('the real Pi loader registers one command set with native package composition in either order', async () => {
+test('the real Pi loader registers one command set with native package composition in either order', async (t) => {
+  // Discovery must not load the developer's project or global extensions.
+  const root = await mkdtemp(join(tmpdir(), 'pi-commit-registration-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const agentDir = join(root, 'agent')
   const commitPath = fileURLToPath(
     new URL('../extensions/commit/index.ts', import.meta.url)
   )
@@ -24,7 +31,7 @@ test('the real Pi loader registers one command set with native package compositi
     [commitPath, composedCommitPath],
     [composedCommitPath, commitPath]
   ]) {
-    const loaded = await discoverAndLoadExtensions(paths, process.cwd())
+    const loaded = await discoverAndLoadExtensions(paths, root, agentDir)
     assert.deepEqual(loaded.errors, [])
     assert.deepEqual(
       loaded.extensions.flatMap((extension) => [...extension.commands.keys()]),
