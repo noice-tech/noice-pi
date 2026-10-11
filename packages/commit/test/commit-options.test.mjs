@@ -115,7 +115,7 @@ test('/commit --no-pr injects the isolated route and strips flags from context',
     /--no-pr/
   )
   assert.match(prompt.message.content, /Do not invoke `gh` for any reason/i)
-  assert.match(prompt.message.content, /report `pr: none`/i)
+  assert.match(prompt.message.content, /report `pr: skipped \(--no-pr\)/i)
   assert.match(prompt.message.content, /Use type\(scope\): description\./)
   assert.match(
     prompt.message.content,
@@ -159,6 +159,7 @@ function createHarness(cwd) {
       commands.set(name, command)
     },
     registerMessageRenderer() {},
+    appendEntry() {},
     sendMessage(message, options) {
       sent.push({ message, options })
       if (message.customType !== PROMPT_MESSAGE_TYPE) return

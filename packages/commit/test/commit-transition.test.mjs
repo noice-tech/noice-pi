@@ -21,6 +21,7 @@ test('/commit keeps its duplicate guard during worker startup', async () => {
       if (name === 'commit') command = registered
     },
     registerMessageRenderer() {},
+    appendEntry() {},
     getThinkingLevel() {
       return 'high'
     },

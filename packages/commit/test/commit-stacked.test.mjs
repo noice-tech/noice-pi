@@ -21,6 +21,7 @@ function registerCommitCommand({ selectedType = 'fix' } = {}) {
       if (name === 'commit') command = registered
     },
     registerMessageRenderer() {},
+    appendEntry() {},
     sendMessage(message, options) {
       sentMessages.push({ message, options })
       if (message.customType !== PROMPT_MESSAGE_TYPE) return

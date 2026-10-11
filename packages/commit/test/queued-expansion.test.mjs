@@ -60,18 +60,23 @@ test(
     const finishWorker = deferred()
     const queuedTurnsDelivered = deferred()
     const deliveredUserMessages = []
+    const deliveredContexts = []
     const faux = fauxProvider()
     faux.setResponses([
       async () => {
         workerStarted.resolve()
         await finishWorker.promise
-        return fauxAssistantMessage('status: committed')
+        return fauxAssistantMessage(
+          'The user committed the changes and pushed the branch.\n\nstatus: committed\nbranch: reused fix/queued-input; now checked out\ncommit: a1b2c3d fix: queued input\npush: pushed origin/fix/queued-input\npr: unchanged #142 https://example.com/pull/142\nverification: Not run\nnotes: none'
+        )
       },
       (context) => {
+        deliveredContexts.push(context)
         deliveredUserMessages.push(lastUserText(context))
         return fauxAssistantMessage('template complete')
       },
       (context) => {
+        deliveredContexts.push(context)
         deliveredUserMessages.push(lastUserText(context))
         queuedTurnsDelivered.resolve()
         return fauxAssistantMessage('skill complete')
@@ -119,6 +124,16 @@ test(
     await queuedTurnsDelivered.promise
     await session.waitForIdle()
 
+    for (const context of deliveredContexts) {
+      const text = JSON.stringify(context.messages)
+      assert.match(text, /The user committed the changes and pushed the branch/)
+      assert.match(text, /commit: a1b2c3d/)
+      assert.doesNotMatch(text, /You are the pi-commit worker/)
+      const resultIndex = context.messages.findIndex((message) =>
+        JSON.stringify(message).includes('commit: a1b2c3d')
+      )
+      assert.ok(resultIndex >= 0 && resultIndex < context.messages.length - 1)
+    }
     assert.equal(
       deliveredUserMessages[0],
       'Expanded queued template: hello world'
