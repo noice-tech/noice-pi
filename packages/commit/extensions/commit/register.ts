@@ -382,7 +382,6 @@ export function registerCommit(pi: ExtensionAPI): void {
               }
             }
           )
-          ctx.ui.notify(`Commit worker failed:\n${assistantError}`, 'error')
           return
         }
 
@@ -404,7 +403,6 @@ export function registerCommit(pi: ExtensionAPI): void {
               }
             }
           )
-          ctx.ui.notify('Commit command cancelled', 'warning')
           return
         }
 
@@ -425,14 +423,6 @@ export function registerCommit(pi: ExtensionAPI): void {
             }
           }
         )
-        ctx.ui.notify(
-          formatCommitNotification(summary, displayStatus),
-          displayStatus === 'failed'
-            ? 'error'
-            : displayStatus === 'cancelled'
-              ? 'warning'
-              : 'info'
-        )
       } catch (error) {
         const message = errorMessage(error)
         returnedToSourceBranch = await sendResultAtSourceLeaf(
@@ -450,7 +440,6 @@ export function registerCommit(pi: ExtensionAPI): void {
             }
           }
         )
-        ctx.ui.notify(`Commit worker failed:\n${message}`, 'error')
       } finally {
         ctx.ui.setWidget(COMMIT_WORKER_WIDGET_KEY, undefined)
         runtime.commitWorkerRunning = false
@@ -626,20 +615,6 @@ function formatWorkerErrorResult(error: string, partialSummary: string) {
   ]
     .filter(Boolean)
     .join('\n')
-}
-
-function formatCommitNotification(
-  summary: string,
-  status: CommitDisplayStatus
-): string {
-  const title =
-    status === 'failed'
-      ? 'Commit worker failed'
-      : status === 'cancelled'
-        ? 'Commit command cancelled'
-        : 'Commit worker finished'
-  const trimmedSummary = summary.trim()
-  return trimmedSummary ? `${title}:\n${trimmedSummary}` : title
 }
 
 function findLastCustomMessageIndex(messages: unknown[], customType: string) {
